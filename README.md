@@ -266,6 +266,73 @@ systemctl list-timers mysql-table-sync.timer --all
 sudo systemctl disable --now mysql-table-sync.timer
 ```
 
+### 7. 每日巡检
+
+定时任务生效后，建议每个工作日确认一次执行结果：
+
+```bash
+systemctl status mysql-table-sync.timer --no-pager
+systemctl status mysql-table-sync.service --no-pager
+sudo journalctl -u mysql-table-sync.service --since today --no-pager
+sudo tail -n 50 /opt/sgb-matsync/logs/mysql_table_sync.log
+```
+
+判读：
+
+- `status=0/SUCCESS` → 正常
+- 有新源数据 → 出现 `Committed sync batch rows_read=N aggregates_written=M last_id=...`
+- 无新数据 → 只有 `Sync completed ... rows_read=0`，属正常，不是故障
+- `status=1/FAILURE` → 找 `journalctl` 里的 `ERROR mysql_table_sync.cli Command failed: ...`
+
+核对游标是否健康（`last_id` 必须是数字开头的业务 ID，不能是 `OnlyKey` 这类脏值）：
+
+```sql
+SELECT * FROM _mysql_table_sync_state;
+```
+
+### 8. 日常运维速查
+
+```bash
+# 立即补跑一次同步
+sudo systemctl start mysql-table-sync.service
+
+# 只做连通性检查，不读写业务表
+sudo systemctl start mysql-table-sync-check.service
+
+# 暂停 / 恢复定时
+sudo systemctl disable --now mysql-table-sync.timer
+sudo systemctl enable  --now mysql-table-sync.timer
+
+# 修改 /etc/mysql-table-sync.env 或 unit 文件之后
+sudo systemctl daemon-reload
+sudo systemctl start mysql-table-sync-check.service
+```
+
+日志有两条查看路径：journal（`journalctl -u mysql-table-sync.service`）和应用轮转文件（`/opt/sgb-matsync/logs/mysql_table_sync.log`，默认满 10 MiB 轮转、保留 5 份）。
+
+### 9. 升级二进制
+
+以后发版只需替换单个文件，配置不会被覆盖：
+
+```bash
+scp mysql-table-sync dba@SERVER:/tmp/
+sudo install -o root -g dba -m 0750 /tmp/mysql-table-sync /opt/sgb-matsync/mysql-table-sync
+sudo systemctl start mysql-table-sync-check.service
+```
+
+### 常见故障速查
+
+| 报错 | 原因 | 处理 |
+| --- | --- | --- |
+| `Source ID contains NULL` | 源表存在 `ID` 为 NULL 的行 | 无法作为增量游标，需在源端补全或过滤 |
+| `Source ID is not unique: 'X'` | 参与同步的 `ID` 重复 | `X` 是脏数据就加进 `SOURCE_EXCLUDED_IDS`；是真实业务 ID 重复则必须在源端去重并建 `UNIQUE` 约束 |
+| `Could not inspect source or target table` | 库名/表名错、账号无权限、表不存在 | 核对 `SOURCE_TABLE` / `TARGET_TABLE` 与账号权限 |
+| `Source table is missing columns: [...]` | 源表缺字段 | 按本文件「实现同步前需确认」列出的字段补齐 |
+| `Target contains duplicate daily aggregate rows` | 目标表同键多行 | 清理重复行，并在目标库加唯一约束 |
+| 二进制无法执行 / `not found` | 架构或 glibc 不匹配 | 用 `ldd` 检查，按服务器系统重新构建 |
+
+**目录约定：** 二进制放 `/opt/sgb-matsync`（可整体替换的构建产物），配置放 `/etc/mysql-table-sync.env`（主机专属，含凭据，不随发布包分发）。这样升级时不会覆盖密码，也避免凭据被误打包或误提交。
+
 **历史数据注意：**现有 ID 游标只同步游标之后的新源记录。部署新版本不会自动重算旧 ID，也不会自动补出新增加的 `<类型短码>_ALL` 历史汇总。生产首次启用或做历史回补前，应先核对目标表和 `_mysql_table_sync_state`，制定备份、目标数据迁移/清理及游标重置方案；不要在已有数据上盲目删除游标后重跑，否则服务会把已有同键数量/金额再次累加。
 
 增量正确性要求源 `ID` 的数据库排序顺序与新数据产生顺序一致，且 ID 已写入后不再修改。由于 `ID` 是字符串且 DDL 未声明唯一约束，格式示例本身不足以证明这一点；如果一条新业务记录后来获得的 ID 小于已保存游标，它会被跳过。建议在源库确认 ID 生成顺序并建立 `UNIQUE NOT NULL` 约束。状态表只记录最后已提交 ID，不保存字段映射版本；运行期间不要更改聚合口径后直接沿用旧游标。
