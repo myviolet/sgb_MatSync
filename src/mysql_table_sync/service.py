@@ -81,7 +81,9 @@ class TableSyncService:
             raise SyncError(f"Target table is missing columns: {sorted(missing_target_columns)}")
 
         source_id = source_table.c[source_id_name]
-        self._validate_source_ids(self._source_engine, source_id)
+        self._validate_source_ids(
+            self._source_engine, source_id, self._settings.source_excluded_ids
+        )
 
         state_metadata = MetaData()
         state_table = Table(
@@ -201,18 +203,18 @@ class TableSyncService:
         return report
 
     @staticmethod
-    def _validate_source_ids(source_engine: Engine, source_id) -> None:
+    def _validate_source_ids(
+        source_engine: Engine, source_id, excluded_ids: tuple[str, ...]
+    ) -> None:
         with source_engine.connect() as connection:
             null_id = connection.execute(
                 select(source_id).where(source_id.is_(None)).limit(1)
             ).first()
             if null_id is not None:
                 raise SyncError("Source ID contains NULL; incremental cursor cannot process it")
-            duplicate_id = connection.execute(
-                select(source_id)
-                .group_by(source_id)
-                .having(func.count() > 1)
-                .limit(1)
-            ).first()
+            duplicate_query = select(source_id).group_by(source_id).having(func.count() > 1)
+            if excluded_ids:
+                duplicate_query = duplicate_query.where(source_id.notin_(excluded_ids))
+            duplicate_id = connection.execute(duplicate_query.limit(1)).first()
             if duplicate_id is not None:
                 raise SyncError(f"Source ID is not unique: {duplicate_id[0]!r}")

@@ -1,6 +1,8 @@
+import pytest
 from sqlalchemy import create_engine, text
 
 from mysql_table_sync.config import Settings
+from mysql_table_sync.exceptions import SyncError
 from mysql_table_sync.service import TableSyncService
 
 
@@ -83,6 +85,63 @@ def test_incremental_cursor_does_not_stall_on_excluded_id() -> None:
             ).scalar_one()
 
         assert last_id == "0001+2026+0002"
+    finally:
+        source_engine.dispose()
+        target_engine.dispose()
+
+
+def test_duplicate_excluded_ids_do_not_block_sync() -> None:
+    """Junk IDs repeat in the source table; they are never synced, so they must not fail validation."""
+    source_engine = create_engine("sqlite://")
+    target_engine = create_engine("sqlite://")
+    settings = Settings(
+        "sqlite://",
+        "sqlite://",
+        batch_size=10,
+        source_excluded_ids=("OnlyKey",),
+    )
+    _create_test_tables(source_engine, target_engine)
+    _insert_source_row(source_engine, "0001+2026+0001", "1", "10.00", "201")
+    _insert_source_row(source_engine, "OnlyKey", "999", "999.00", "201")
+    _insert_source_row(source_engine, "OnlyKey", "888", "888.00", "201")
+
+    try:
+        service = TableSyncService(source_engine, target_engine, settings)
+        report = service.run()
+
+        assert report.rows_read == 1
+        assert report.rows_written == 2
+
+        with target_engine.connect() as connection:
+            last_id = connection.execute(
+                text("SELECT last_id FROM _mysql_table_sync_state")
+            ).scalar_one()
+
+        assert last_id == "0001+2026+0001"
+    finally:
+        source_engine.dispose()
+        target_engine.dispose()
+
+
+def test_duplicate_synced_id_still_fails() -> None:
+    """The uniqueness guard must stay active for rows that actually get synced."""
+    source_engine = create_engine("sqlite://")
+    target_engine = create_engine("sqlite://")
+    settings = Settings(
+        "sqlite://",
+        "sqlite://",
+        batch_size=10,
+        source_excluded_ids=("OnlyKey",),
+    )
+    _create_test_tables(source_engine, target_engine)
+    _insert_source_row(source_engine, "0001+2026+0001", "1", "10.00", "201")
+    _insert_source_row(source_engine, "0001+2026+0001", "2", "20.00", "201")
+
+    try:
+        service = TableSyncService(source_engine, target_engine, settings)
+
+        with pytest.raises(SyncError, match="not unique"):
+            service.run()
     finally:
         source_engine.dispose()
         target_engine.dispose()
