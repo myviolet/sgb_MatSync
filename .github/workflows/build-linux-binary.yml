@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build and package on glibc 2.31
         shell: bash
@@ -43,7 +43,7 @@ jobs:
             bash -euxo pipefail -c '
               apt-get update
               apt-get install -y --no-install-recommends binutils
-              ldd --version | head -n 1
+              ldd --version
               python -m pip install --no-cache-dir pyinstaller==6.11.1 .
               pyinstaller --clean --noconfirm --onefile \
                 --name mysql-table-sync \
@@ -53,7 +53,7 @@ jobs:
                 --collect-all dotenv \
                 build_binary.py
               chmod 0755 dist/mysql-table-sync
-              file dist/mysql-table-sync
+              objdump -f dist/mysql-table-sync
               dist/mysql-table-sync --help
 
               release_dir="release/mysql-table-sync-linux-x86_64-glibc-2.31"
