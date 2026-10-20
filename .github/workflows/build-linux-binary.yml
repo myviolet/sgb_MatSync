@@ -1,0 +1,79 @@
+name: Build Linux standalone binary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+
+      - name: Run tests
+        run: pytest
+
+  build-linux-x86_64:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build and package on glibc 2.31
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            python:3.11.9-slim-bullseye \
+            bash -euxo pipefail -c '
+              apt-get update
+              apt-get install -y --no-install-recommends binutils
+              ldd --version | head -n 1
+              python -m pip install --no-cache-dir pyinstaller==6.11.1 .
+              pyinstaller --clean --noconfirm --onefile \
+                --name mysql-table-sync \
+                --paths src \
+                --collect-all sqlalchemy \
+                --collect-all pymysql \
+                --collect-all dotenv \
+                build_binary.py
+              chmod 0755 dist/mysql-table-sync
+              file dist/mysql-table-sync
+              dist/mysql-table-sync --help
+
+              release_dir="release/mysql-table-sync-linux-x86_64-glibc-2.31"
+              mkdir -p "$release_dir"
+              cp dist/mysql-table-sync "$release_dir/mysql-table-sync"
+              cp deploy/systemd/mysql-table-sync.service "$release_dir/"
+              cp deploy/systemd/mysql-table-sync-check.service "$release_dir/"
+              cp deploy/systemd/mysql-table-sync.timer "$release_dir/"
+              cp .env.example "$release_dir/mysql-table-sync.env.example"
+              tar czf "release/$(basename "$release_dir").tar.gz" -C release "$(basename "$release_dir")"
+              sha256sum "release/$(basename "$release_dir").tar.gz" > "release/$(basename "$release_dir").tar.gz.sha256"
+              cat "release/$(basename "$release_dir").tar.gz.sha256"
+            '
+
+      - name: Upload Linux release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-table-sync-linux-x86_64-glibc-2.31
+          path: |
+            release/mysql-table-sync-linux-x86_64-glibc-2.31.tar.gz
+            release/mysql-table-sync-linux-x86_64-glibc-2.31.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30

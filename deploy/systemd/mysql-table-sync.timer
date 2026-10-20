@@ -1,0 +1,11 @@
+[Unit]
+Description=Run SAP material movement MySQL synchronization daily
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=5m
+Unit=mysql-table-sync.service
+
+[Install]
+WantedBy=timers.target

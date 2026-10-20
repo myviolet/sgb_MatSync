@@ -1,0 +1,20 @@
+[Unit]
+Description=Check source and target MySQL connectivity for material sync
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=dba
+Group=dba
+WorkingDirectory=/opt/sgb-matsync
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/mysql-table-sync.env
+ExecStart=/opt/sgb-matsync/mysql-table-sync check
+TimeoutStartSec=2m
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/sgb-matsync/logs
