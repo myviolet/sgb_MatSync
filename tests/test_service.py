@@ -50,6 +50,44 @@ def _insert_source_row(
         )
 
 
+def test_incremental_cursor_does_not_stall_on_excluded_id() -> None:
+    """Excluded IDs sort after every numeric source ID, so they must never become the cursor."""
+    source_engine = create_engine("sqlite://")
+    target_engine = create_engine("sqlite://")
+    settings = Settings(
+        "sqlite://",
+        "sqlite://",
+        batch_size=2,
+        source_excluded_ids=("OnlyKey",),
+    )
+    _create_test_tables(source_engine, target_engine)
+    _insert_source_row(source_engine, "0001+2026+0001", "1", "10.00", "201")
+    _insert_source_row(source_engine, "OnlyKey", "999", "999.00", "201")
+
+    try:
+        service = TableSyncService(source_engine, target_engine, settings)
+        first_run = service.run()
+
+        assert first_run.rows_read == 1
+        assert first_run.rows_written == 2
+
+        _insert_source_row(source_engine, "0001+2026+0002", "2", "20.00", "201")
+        second_run = service.run()
+
+        assert second_run.rows_read == 1
+        assert second_run.rows_written == 2
+
+        with target_engine.connect() as connection:
+            last_id = connection.execute(
+                text("SELECT last_id FROM _mysql_table_sync_state")
+            ).scalar_one()
+
+        assert last_id == "0001+2026+0002"
+    finally:
+        source_engine.dispose()
+        target_engine.dispose()
+
+
 def test_full_then_incremental_sync_uses_source_id_cursor() -> None:
     source_engine = create_engine("sqlite://")
     target_engine = create_engine("sqlite://")

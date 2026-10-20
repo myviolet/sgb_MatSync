@@ -112,6 +112,10 @@ class TableSyncService:
             )
             if last_id is not None:
                 source_query = source_query.where(source_id > last_id)
+            if self._settings.source_excluded_ids:
+                source_query = source_query.where(
+                    source_id.notin_(self._settings.source_excluded_ids)
+                )
             with self._source_engine.connect() as connection:
                 source_rows = [dict(row) for row in connection.execute(source_query).mappings()]
             if not source_rows:

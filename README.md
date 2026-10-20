@@ -78,7 +78,7 @@ mysql-table-sync check
 mysql-table-sync sync
 ```
 
-`check` 会分别连接两个库执行 `SELECT 1`。`sync` 首次全量读取，随后按 `ID` 增量；每批目标数据写入与游标推进处于同一事务。相同日汇总键的新数据会累加到目标记录，目标已有多个相同键时会报错停止。可在仓库根目录运行 `python -m mysql_table_sync.cli --help`，或执行 `pytest`。
+`check` 会分别连接两个库执行 `SELECT 1`。`sync` 首次全量读取，随后按 `ID` 增量；每批目标数据写入与游标推进处于同一事务。`SOURCE_EXCLUDED_IDS` 中的异常 ID 会在源查询阶段就被过滤掉，不会进入游标：由于 `ID` 是字符串，`OnlyKey` 这类以字母开头的值在字符序上大于所有以数字开头的业务 ID，若让它成为游标，后续 `ID > 'OnlyKey'` 将永远查不到新数据。相同日汇总键的新数据会累加到目标记录，目标已有多个相同键时会报错停止。可在仓库根目录运行 `python -m mysql_table_sync.cli --help`，或执行 `pytest`。
 
 ## 每日定时执行（Windows）
 

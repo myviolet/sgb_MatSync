@@ -7,3 +7,8 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+release/
+mysql-table-sync-linux-*.zip
+mysql-table-sync-linux-*.tar.gz
+mysql-table-sync-linux-*.tar.gz.sha256
+mysql-table-sync-linux-*/
