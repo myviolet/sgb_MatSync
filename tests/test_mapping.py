@@ -300,7 +300,7 @@ def test_daily_all_group_combines_purchase_rows_across_material_numbers() -> Non
     [
         ("硅铁", "kg", Decimal("0.0025")),
         ("柴油", "l", Decimal("0.0020775")),
-        ("焦炭", "KG", Decimal("0.0025")),
+        ("焦炭", "KG", Decimal("2.5")),
         ("兰炭", "t", Decimal("2.5")),
         ("兰炭", "TO", Decimal("2.5")),
         ("兰炭", "kg", Decimal("0.0025")),
@@ -328,6 +328,27 @@ def test_material_units_are_normalized(
     assert aggregate.dvalue == expected_quantity
     assert aggregate.price == Decimal("1")
     assert MATERIAL_SOURCE_UNITS[material_type]
+
+
+def test_coke_quantity_is_kept_in_kilograms_while_others_stay_in_tonnes() -> None:
+    def aggregate_for(material_type: str) -> object:
+        return aggregate_consumption_rows(
+            [
+                {
+                    "ID": "row-1",
+                    "MovementType": "291",
+                    "MaterialType": material_type,
+                    "Material": "MAT001",
+                    "PostingDate": "20261009",
+                    "Qty": "2500",
+                    "Unit": "kg",
+                    "CNY": "100",
+                }
+            ]
+        )[0]
+
+    assert aggregate_for("焦炭").dvalue == Decimal("2500")
+    assert aggregate_for("煤炭").dvalue == Decimal("2.5")
 
 
 def test_unsupported_unit_fails_instead_of_misaggregating() -> None:

@@ -407,6 +407,32 @@ DROP TABLE _matsync_lower_backup;
 
 迁移只改 `meter_number`，`_mysql_table_sync_state` 的游标不受影响，无需重新全量同步。迁移期间应先 `sudo systemctl disable --now mysql-table-sync.timer`，避免定时任务并发写入。
 
+**焦炭数量单位变更：**早期版本把焦炭 `kg` 也除以 1000 存成吨，当前版本焦炭 `dvalue` 直接以 `kg` 存储。历史行的数值仍是吨，若不迁移，同一物料在不同日期会出现两种单位，任何跨日汇总都会失真。先用只读查询确认命中范围并核对数量级：
+
+```sql
+SELECT COUNT(*) AS rows, SUM(dvalue) AS total, MIN(dvalue) AS min_dvalue, MAX(dvalue) AS max_dvalue
+FROM record_frozen_data
+WHERE stat_type = 1
+  AND update_at IS NOT NULL
+  AND last_value IS NULL AND current_value IS NULL
+  AND last_time IS NULL AND current_time IS NULL
+  AND LOWER(meter_number) LIKE 'cok%';
+```
+
+确认只命中本服务的焦炭行后乘以 1000 换回千克：
+
+```sql
+UPDATE record_frozen_data
+SET dvalue = dvalue * 1000
+WHERE stat_type = 1
+  AND update_at IS NOT NULL
+  AND last_value IS NULL AND current_value IS NULL
+  AND last_time IS NULL AND current_time IS NULL
+  AND LOWER(meter_number) LIKE 'cok%';
+```
+
+`price`（金额）不受单位换算影响，不要一起改。迁移后同一 `cok%` 键的历史值与新写入值单位一致，后续增量的累加才是正确的。若业务决定历史数据保持吨不变，则不能对已有的 `(meter_number, frozen_time)` 再进行累加，需另行确认下游统计口径。
+
 **历史数据注意：**现有 ID 游标只同步游标之后的新源记录。部署新版本不会自动重算旧 ID，也不会自动补出新增加的 `<类型短码>_all` 历史汇总。生产首次启用或做历史回补前，应先核对目标表和 `_mysql_table_sync_state`，制定备份、目标数据迁移/清理及游标重置方案；不要在已有数据上盲目删除游标后重跑，否则服务会把已有同键数量/金额再次累加。
 
 增量正确性要求源 `ID` 的数据库排序顺序与新数据产生顺序一致，且 ID 已写入后不再修改。由于 `ID` 是字符串且 DDL 未声明唯一约束，格式示例本身不足以证明这一点；如果一条新业务记录后来获得的 ID 小于已保存游标，它会被跳过。建议在源库确认 ID 生成顺序并建立 `UNIQUE NOT NULL` 约束。状态表只记录最后已提交 ID，不保存字段映射版本；运行期间不要更改聚合口径后直接沿用旧游标。
@@ -419,7 +445,7 @@ DROP TABLE _matsync_lower_backup;
 
 已实现的聚合口径：仅处理上方逐 MaterialType 配置的采购/消耗/含水 movement type，并排除异常 ID。同一源行会分别进入 Material 明细组和对应 MaterialType 的 `_all` 总组；如矩阵将该 MovementType 同时标记为采购和含水，则两种类别各自都有明细组及 ALL 组。随后按 `(meter_number, PostingDate)` 分组，`PostingDate` 按 `YYYYMMDD` 解析为目标日。`Qty` 转换为吨后求和，`CNY` 同组求和并作为聚合结果的 `price`。目标行构造时，`last_value`、`current_value`、`last_time`、`current_time` 不提供，`update_at` 使用写入时刻，`stat_type` 固定为 `1`。仍需确认 `CNY` 字段确为每行金额而非单价。
 
-目标 `dvalue` 统一以吨 (`t`) 存储：硅铁、焦炭、煤炭、白云石、废钢和石灰石的 `kg` 数量除以 1000；柴油的 `l` 数量乘以密度 `0.831 kg/l` 后除以 1000；兰炭的 `t`/`TO` 数量保持不变，`kg` 除以 1000。源单位按大小写不敏感处理。Qty/CNY 支持 `-10,709.36` 这种三位千分位逗号格式，非法分组仍会报错。其他不符合物料单位规则的行会报错，不会静默按错误单位合并。聚合结果使用 Decimal 精确计算；正负数量和金额保留符号参与净额计算。
+目标 `dvalue` 按物料使用不同单位：焦炭直接以源单位 `kg` 存储，不做换算；硅铁、煤炭、白云石、废钢和石灰石的 `kg` 数量除以 1000 换算为吨 (`t`)；柴油的 `l` 数量乘以密度 `0.831 kg/l` 后除以 1000 换算为吨；兰炭的 `t`/`TO` 数量保持不变（本身是吨），`kg` 除以 1000。单位口径由 `MATERIAL_TARGET_UNITS` 定义。源单位按大小写不敏感处理。Qty/CNY 支持 `-10,709.36` 这种三位千分位逗号格式，非法分组仍会报错。其他不符合物料单位规则的行会报错，不会静默按错误单位合并。聚合结果使用 Decimal 精确计算；正负数量和金额保留符号参与净额计算。
 
 注意：开发库首次同步的目标记录是在此吨换算规则加入前写入的旧口径数据。程序升级后，ID 游标已到源表最大值，普通增量运行不会回溯重算这些行；需要单独制定并授权历史数据迁移或清空目标后重跑方案，避免新旧单位混存。
 

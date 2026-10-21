@@ -71,7 +71,6 @@ MATERIAL_MOVEMENT_CATEGORIES = {
 }
 CATEGORY_SUFFIXES = {"usage": "", "purchase": "_p", "moisture": "_mc"}
 ALL_MATERIALS_SUFFIX = "_all"
-TARGET_QUANTITY_UNIT = "t"
 KG_TO_TONNES = Decimal("0.001")
 DIESEL_DENSITY_KG_PER_LITRE = Decimal("0.831")
 MATERIAL_SOURCE_UNITS = {
@@ -83,6 +82,17 @@ MATERIAL_SOURCE_UNITS = {
     "废钢": frozenset({"kg"}),
     "兰炭": frozenset({"kg", "t", "to"}),
     "石灰石": frozenset({"kg"}),
+}
+# Target dvalue unit per material. 焦炭 stays in kg, everything else is stored in tonnes.
+MATERIAL_TARGET_UNITS = {
+    "硅铁": "t",
+    "柴油": "t",
+    "焦炭": "kg",
+    "煤炭": "t",
+    "白云石": "t",
+    "废钢": "t",
+    "兰炭": "t",
+    "石灰石": "t",
 }
 
 
@@ -125,11 +135,18 @@ def _to_base_quantity(material_type: str, unit: str, quantity: Decimal) -> Decim
             f"Unsupported Unit {unit!r} for MaterialType {material_type!r}; "
             f"expected one of {sorted(allowed_units)!r}"
         )
+
     if unit == "kg":
-        return quantity * KG_TO_TONNES
-    if material_type == "柴油" and unit == "l":
-        return quantity * DIESEL_DENSITY_KG_PER_LITRE * KG_TO_TONNES
-    return quantity
+        kilograms = quantity
+    elif material_type == "柴油" and unit == "l":
+        kilograms = quantity * DIESEL_DENSITY_KG_PER_LITRE
+    else:
+        # 兰炭的 t / to 本身已是吨，直接作为目标值
+        return quantity
+
+    if MATERIAL_TARGET_UNITS[material_type] == "kg":
+        return kilograms
+    return kilograms * KG_TO_TONNES
 
 
 def map_consumption_rows(
