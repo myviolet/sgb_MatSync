@@ -333,22 +333,79 @@ sudo systemctl start mysql-table-sync-check.service
 
 **目录约定：** 二进制放 `/opt/sgb-matsync`（可整体替换的构建产物），配置放 `/etc/mysql-table-sync.env`（主机专属，含凭据，不随发布包分发）。这样升级时不会覆盖密码，也避免凭据被误打包或误提交。
 
-**meter_number 大小写变更：**早期版本输出大写 `meter_number`（如 `SFE20056684`、`COA_ALL_P`），当前版本统一输出小写。目标表按 `meter_number` 匹配日汇总，若不迁移已有数据，新版本会为同一物料同一日期**插入新的小写行**而不是累加到旧的大写行，造成同一业务数据大小写两份。升级前先执行：
+**meter_number 大小写变更：**早期版本输出大写 `meter_number`（如 `SFE20056684`、`COA_ALL_P`），当前版本统一输出小写。目标表按 `meter_number` 匹配日汇总，若不迁移已有数据，新版本会为同一物料同一日期**插入新的小写行**而不是累加到旧的大写行，造成同一业务数据大小写两份。
+
+目标表可能同时存放其他系统写入的数据，因此**不能**对全表执行 `UPDATE ... SET meter_number = LOWER(meter_number)`。本服务写入的行具有固定特征：`stat_type = 1`、`update_at` 非空、`last_value`/`current_value`/`last_time`/`current_time` 全为 NULL，且 `meter_number` 形如 `<短码><Material>` 或 `<短码>_ALL`，可带 `_P`/`_MC` 后缀。
+
+先用只读查询确认命中范围：
 
 ```sql
-UPDATE record_frozen_data SET meter_number = LOWER(meter_number);
+-- 1. 各 stat_type 的分布，确认 stat_type=1 是否为本服务专属
+SELECT stat_type, COUNT(*) AS total,
+       SUM(BINARY meter_number REGEXP '^[A-Z]') AS upper_first,
+       SUM(BINARY meter_number REGEXP '^[a-z]') AS lower_first
+FROM record_frozen_data
+GROUP BY stat_type;
+
+-- 2. 按前缀看表和库里都有哪些编码
+SELECT LEFT(meter_number, 3) AS prefix, stat_type, COUNT(*) AS c
+FROM record_frozen_data
+GROUP BY prefix, stat_type
+ORDER BY c DESC
+LIMIT 50;
+
+-- 3. 命中本服务特征的样本，人工确认没有别人的数据混进来
+SELECT id, meter_number, frozen_time, stat_type, update_at
+FROM record_frozen_data
+WHERE stat_type = 1
+  AND update_at IS NOT NULL
+  AND last_value IS NULL AND current_value IS NULL
+  AND last_time IS NULL AND current_time IS NULL
+  AND meter_number REGEXP '^(SFE|DIE|COK|COA|DOL|SCR|SEM|LIM)(_ALL|[0-9]+)(_P|_MC)?$'
+LIMIT 20;
 ```
 
-执行前先确认目标表不存在只差大小写的同键记录：
+第 3 条只命中本服务数据后，用快照表把目标行锁定到 `id`，再按 `id` 更新（顺带留一份改前值便于回滚）：
 
 ```sql
+CREATE TABLE _matsync_lower_backup AS
+SELECT id, meter_number
+FROM record_frozen_data
+WHERE stat_type = 1
+  AND update_at IS NOT NULL
+  AND last_value IS NULL AND current_value IS NULL
+  AND last_time IS NULL AND current_time IS NULL
+  AND BINARY meter_number REGEXP '^[A-Z]'
+  AND meter_number REGEXP '^(SFE|DIE|COK|COA|DOL|SCR|SEM|LIM)(_ALL|[0-9]+)(_P|_MC)?$';
+
+ALTER TABLE _matsync_lower_backup ADD PRIMARY KEY (id);
+
+SELECT COUNT(*) AS to_migrate FROM _matsync_lower_backup;
+
+UPDATE record_frozen_data t
+JOIN _matsync_lower_backup b ON b.id = t.id
+SET t.meter_number = LOWER(t.meter_number);
+```
+
+校验后再清理快照表：
+
+```sql
+-- 不应再出现大写前缀
+SELECT COUNT(*) AS remaining_upper FROM record_frozen_data
+WHERE stat_type = 1 AND BINARY meter_number REGEXP '^[A-Z]';
+
+-- 不应出现只差大小写的同键记录
 SELECT LOWER(meter_number) AS key_lower, COUNT(*) AS c
 FROM record_frozen_data
 GROUP BY key_lower
-HAVING COUNT(*) > 1;
+HAVING c > 1;
+
+DROP TABLE _matsync_lower_backup;
 ```
 
-有结果说明已存在冲突行，需先人工合并再迁移。迁移只改 `meter_number`，游标不受影响，无需重新全量同步。
+若第二条有结果，说明迁移前已存在冲突行，需先人工合并。**回滚**可用备份表还原：`UPDATE record_frozen_data t JOIN _matsync_lower_backup b ON b.id = t.id SET t.meter_number = b.meter_number;`（需在 `DROP` 之前）。
+
+迁移只改 `meter_number`，`_mysql_table_sync_state` 的游标不受影响，无需重新全量同步。迁移期间应先 `sudo systemctl disable --now mysql-table-sync.timer`，避免定时任务并发写入。
 
 **历史数据注意：**现有 ID 游标只同步游标之后的新源记录。部署新版本不会自动重算旧 ID，也不会自动补出新增加的 `<类型短码>_all` 历史汇总。生产首次启用或做历史回补前，应先核对目标表和 `_mysql_table_sync_state`，制定备份、目标数据迁移/清理及游标重置方案；不要在已有数据上盲目删除游标后重跑，否则服务会把已有同键数量/金额再次累加。
 
