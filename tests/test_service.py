@@ -187,7 +187,7 @@ def test_full_then_incremental_sync_uses_source_id_cursor() -> None:
 
         assert len(rows) == 2
         rows_by_meter = {row["meter_number"]: row for row in rows}
-        for meter_number in ("SFE20056684", "SFE_ALL"):
+        for meter_number in ("sfe20056684", "sfe_all"):
             assert float(rows_by_meter[meter_number]["dvalue"]) == 0.01
             assert float(rows_by_meter[meter_number]["price"]) == 100.0
             assert rows_by_meter[meter_number]["stat_type"] == 1
@@ -219,12 +219,12 @@ def test_sync_writes_moisture_and_usage_to_separate_meter_rows() -> None:
             ).all()
 
         assert rows == [
-            ("COA20056684", 1),
-            ("COA20056684_MC", 0.5),
-            ("COA20056684_P", 0.5),
-            ("COA_ALL", 1),
-            ("COA_ALL_MC", 0.5),
-            ("COA_ALL_P", 0.5),
+            ("coa20056684", 1),
+            ("coa20056684_mc", 0.5),
+            ("coa20056684_p", 0.5),
+            ("coa_all", 1),
+            ("coa_all_mc", 0.5),
+            ("coa_all_p", 0.5),
         ]
     finally:
         source_engine.dispose()

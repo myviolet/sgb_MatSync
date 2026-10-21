@@ -40,20 +40,20 @@ mysql+pymysql://用户名:密码@主机:3306/数据库名?charset=utf8mb4
 
 ## 已确认的源数据筛选规则
 
-- MovementType 分类由 `MaterialType` 决定，不使用对所有物料通用的 movement type 集合。采购编码追加 `_P`，含水编码追加 `_MC`，消耗使用基础编码。
+- MovementType 分类由 `MaterialType` 决定，不使用对所有物料通用的 movement type 集合。采购编码追加 `_p`，含水编码追加 `_mc`，消耗使用基础编码。
 - 默认排除 `ID=OnlyKey`，并可通过 `SOURCE_EXCLUDED_IDS` 配置其他排除项。
-- 按 `MaterialType` 取得类型短码，再直接拼接源字段 `Material` 生成基础 `meter_number`（不加分隔符）。例如硅铁、`Material=20056684` 得到 `SFE20056684`。采购在基础编码后追加 `_P`，得到 `SFE20056684_P`；含水量追加 `_MC`，得到 `SFE20056684_MC`。`MovementType=102` 会同时产生 `_P` 和 `_MC` 两类记录。
+- 按 `MaterialType` 取得类型短码，再直接拼接源字段 `Material` 生成基础 `meter_number`（不加分隔符），最终整体转成小写。例如硅铁、`Material=20056684` 得到 `sfe20056684`。采购在基础编码后追加 `_p`，得到 `sfe20056684_p`；含水量追加 `_mc`，得到 `sfe20056684_mc`。`MovementType=102` 会同时产生 `_p` 和 `_mc` 两类记录。
 
 | MaterialType | 类型短码 |
 | --- | --- |
-| 硅铁 | `SFE` |
-| 柴油 | `DIE` |
-| 焦炭 | `COK` |
-| 煤炭 | `COA` |
-| 白云石 | `DOL` |
-| 废钢 | `SCR` |
-| 兰炭 | `SEM` |
-| 石灰石 | `LIM` |
+| 硅铁 | `sfe` |
+| 柴油 | `die` |
+| 焦炭 | `cok` |
+| 煤炭 | `coa` |
+| 白云石 | `dol` |
+| 废钢 | `scr` |
+| 兰炭 | `sem` |
+| 石灰石 | `lim` |
 
 | MaterialType | 采购量 MovementType | 消耗量 MovementType | 含水量 MovementType |
 | --- | --- | --- | --- |
@@ -66,9 +66,9 @@ mysql+pymysql://用户名:密码@主机:3306/数据库名?charset=utf8mb4
 | 柴油 | `101` | `201` | 不处理 |
 | 废钢 | `101, 102, 105` | `201, 202, 291, 292` | 不处理 |
 
-对煤炭、兰炭、焦炭、石灰石、白云石，`MovementType=102` 同一源记录同时生成采购 `_P` 和含水 `_MC` 两个目标分类；废钢的 `102` 仅作采购。硅铁、柴油的 `102` 不在对应规则中，会被跳过。
+对煤炭、兰炭、焦炭、石灰石、白云石，`MovementType=102` 同一源记录同时生成采购 `_p` 和含水 `_mc` 两个目标分类；废钢的 `102` 仅作采购。硅铁、柴油的 `102` 不在对应规则中，会被跳过。
 
-未映射的物料类型、空 `Material` 或不在对应矩阵中的 MovementType 会被跳过。每条有效源记录除原有 Material 明细汇总外，还会计入该 `MaterialType` 的每日分类总汇总：用量编码为 `<类型短码>_ALL`，采购为 `<类型短码>_ALL_P`，含水量为 `<类型短码>_ALL_MC`。例如煤炭会分别生成 `COA_ALL`、`COA_ALL_P` 和 `COA_ALL_MC`。汇总键为 `(meter_number, PostingDate)`；明细行仍按 Material 区分，ALL 行跨同一 MaterialType 下不同 Material 合计，但不会把用量、采购、含水类别混在一起。规则函数位于 `src/mysql_table_sync/mapping.py`。
+未映射的物料类型、空 `Material` 或不在对应矩阵中的 MovementType 会被跳过。每条有效源记录除原有 Material 明细汇总外，还会计入该 `MaterialType` 的每日分类总汇总：用量编码为 `<类型短码>_all`，采购为 `<类型短码>_all_p`，含水量为 `<类型短码>_all_mc`。例如煤炭会分别生成 `coa_all`、`coa_all_p` 和 `coa_all_mc`。汇总键为 `(meter_number, PostingDate)`；明细行仍按 Material 区分，ALL 行跨同一 MaterialType 下不同 Material 合计，但不会把用量、采购、含水类别混在一起。规则函数位于 `src/mysql_table_sync/mapping.py`。
 
 ## 命令
 
@@ -333,7 +333,24 @@ sudo systemctl start mysql-table-sync-check.service
 
 **目录约定：** 二进制放 `/opt/sgb-matsync`（可整体替换的构建产物），配置放 `/etc/mysql-table-sync.env`（主机专属，含凭据，不随发布包分发）。这样升级时不会覆盖密码，也避免凭据被误打包或误提交。
 
-**历史数据注意：**现有 ID 游标只同步游标之后的新源记录。部署新版本不会自动重算旧 ID，也不会自动补出新增加的 `<类型短码>_ALL` 历史汇总。生产首次启用或做历史回补前，应先核对目标表和 `_mysql_table_sync_state`，制定备份、目标数据迁移/清理及游标重置方案；不要在已有数据上盲目删除游标后重跑，否则服务会把已有同键数量/金额再次累加。
+**meter_number 大小写变更：**早期版本输出大写 `meter_number`（如 `SFE20056684`、`COA_ALL_P`），当前版本统一输出小写。目标表按 `meter_number` 匹配日汇总，若不迁移已有数据，新版本会为同一物料同一日期**插入新的小写行**而不是累加到旧的大写行，造成同一业务数据大小写两份。升级前先执行：
+
+```sql
+UPDATE record_frozen_data SET meter_number = LOWER(meter_number);
+```
+
+执行前先确认目标表不存在只差大小写的同键记录：
+
+```sql
+SELECT LOWER(meter_number) AS key_lower, COUNT(*) AS c
+FROM record_frozen_data
+GROUP BY key_lower
+HAVING COUNT(*) > 1;
+```
+
+有结果说明已存在冲突行，需先人工合并再迁移。迁移只改 `meter_number`，游标不受影响，无需重新全量同步。
+
+**历史数据注意：**现有 ID 游标只同步游标之后的新源记录。部署新版本不会自动重算旧 ID，也不会自动补出新增加的 `<类型短码>_all` 历史汇总。生产首次启用或做历史回补前，应先核对目标表和 `_mysql_table_sync_state`，制定备份、目标数据迁移/清理及游标重置方案；不要在已有数据上盲目删除游标后重跑，否则服务会把已有同键数量/金额再次累加。
 
 增量正确性要求源 `ID` 的数据库排序顺序与新数据产生顺序一致，且 ID 已写入后不再修改。由于 `ID` 是字符串且 DDL 未声明唯一约束，格式示例本身不足以证明这一点；如果一条新业务记录后来获得的 ID 小于已保存游标，它会被跳过。建议在源库确认 ID 生成顺序并建立 `UNIQUE NOT NULL` 约束。状态表只记录最后已提交 ID，不保存字段映射版本；运行期间不要更改聚合口径后直接沿用旧游标。
 
@@ -343,13 +360,13 @@ sudo systemctl start mysql-table-sync-check.service
 
 目标表 `record_frozen_data` 的字段为 `id`（自增主键）、`frozen_time`、`meter_number`、`dvalue`、`price`、`last_value`、`current_value`、`last_time`、`current_time`、`update_at` 和 `stat_type`。目标表没有源 `ID` 字段，`(meter_number, frozen_time, stat_type)` 也没有唯一约束。当前实现用这三列匹配日汇总并更新数量/金额；若查询到多个匹配项会停止。建议确认该复合键业务唯一，并在目标库加唯一约束，以从数据库层保证并发和重试安全。
 
-已实现的聚合口径：仅处理上方逐 MaterialType 配置的采购/消耗/含水 movement type，并排除异常 ID。同一源行会分别进入 Material 明细组和对应 MaterialType 的 `_ALL` 总组；如矩阵将该 MovementType 同时标记为采购和含水，则两种类别各自都有明细组及 ALL 组。随后按 `(meter_number, PostingDate)` 分组，`PostingDate` 按 `YYYYMMDD` 解析为目标日。`Qty` 转换为吨后求和，`CNY` 同组求和并作为聚合结果的 `price`。目标行构造时，`last_value`、`current_value`、`last_time`、`current_time` 不提供，`update_at` 使用写入时刻，`stat_type` 固定为 `1`。仍需确认 `CNY` 字段确为每行金额而非单价。
+已实现的聚合口径：仅处理上方逐 MaterialType 配置的采购/消耗/含水 movement type，并排除异常 ID。同一源行会分别进入 Material 明细组和对应 MaterialType 的 `_all` 总组；如矩阵将该 MovementType 同时标记为采购和含水，则两种类别各自都有明细组及 ALL 组。随后按 `(meter_number, PostingDate)` 分组，`PostingDate` 按 `YYYYMMDD` 解析为目标日。`Qty` 转换为吨后求和，`CNY` 同组求和并作为聚合结果的 `price`。目标行构造时，`last_value`、`current_value`、`last_time`、`current_time` 不提供，`update_at` 使用写入时刻，`stat_type` 固定为 `1`。仍需确认 `CNY` 字段确为每行金额而非单价。
 
 目标 `dvalue` 统一以吨 (`t`) 存储：硅铁、焦炭、煤炭、白云石、废钢和石灰石的 `kg` 数量除以 1000；柴油的 `l` 数量乘以密度 `0.831 kg/l` 后除以 1000；兰炭的 `t`/`TO` 数量保持不变，`kg` 除以 1000。源单位按大小写不敏感处理。Qty/CNY 支持 `-10,709.36` 这种三位千分位逗号格式，非法分组仍会报错。其他不符合物料单位规则的行会报错，不会静默按错误单位合并。聚合结果使用 Decimal 精确计算；正负数量和金额保留符号参与净额计算。
 
 注意：开发库首次同步的目标记录是在此吨换算规则加入前写入的旧口径数据。程序升级后，ID 游标已到源表最大值，普通增量运行不会回溯重算这些行；需要单独制定并授权历史数据迁移或清空目标后重跑方案，避免新旧单位混存。
 
-MovementType 分类变化也不会自动重放游标之前的源行。若需按上述物料矩阵重新分类历史数据，需先清理/迁移对应目标汇总并重置游标后重新全量同步；否则已处理过的历史 ID 不会生成新的 `_P`/`_MC` 分类。
+MovementType 分类变化也不会自动重放游标之前的源行。若需按上述物料矩阵重新分类历史数据，需先清理/迁移对应目标汇总并重置游标后重新全量同步；否则已处理过的历史 ID 不会生成新的 `_p`/`_mc` 分类。
 
 1. 说明目标列 `last_value`、`current_value`、`last_time`、`current_time`、`update_at` 和 `stat_type` 的取值来源或默认规则；目标表的必填列必须有确定数据来源。
 2. 确认源表 `ID` 是否确实唯一且非空，并在源库通过 `PRIMARY KEY` 或 `UNIQUE NOT NULL` 约束保证；当前提供的源 DDL 未声明该约束。

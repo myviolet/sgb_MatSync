@@ -8,14 +8,14 @@ import re
 from typing import Any
 
 MATERIAL_TYPE_CODES = {
-    "硅铁": "SFE",
-    "柴油": "DIE",
-    "焦炭": "COK",
-    "煤炭": "COA",
-    "白云石": "DOL",
-    "废钢": "SCR",
-    "兰炭": "SEM",
-    "石灰石": "LIM",
+    "硅铁": "sfe",
+    "柴油": "die",
+    "焦炭": "cok",
+    "煤炭": "coa",
+    "白云石": "dol",
+    "废钢": "scr",
+    "兰炭": "sem",
+    "石灰石": "lim",
 }
 MATERIAL_MOVEMENT_CATEGORIES = {
     "煤炭": {
@@ -69,7 +69,8 @@ MATERIAL_MOVEMENT_CATEGORIES = {
         "292": ("usage",),
     },
 }
-CATEGORY_SUFFIXES = {"usage": "", "purchase": "_P", "moisture": "_MC"}
+CATEGORY_SUFFIXES = {"usage": "", "purchase": "_p", "moisture": "_mc"}
+ALL_MATERIALS_SUFFIX = "_all"
 TARGET_QUANTITY_UNIT = "t"
 KG_TO_TONNES = Decimal("0.001")
 DIESEL_DENSITY_KG_PER_LITRE = Decimal("0.831")
@@ -151,9 +152,13 @@ def map_consumption_rows(
     if not categories:
         return []
 
-    base_meter_number = f"{type_code}{material}"
+    base_meter_number = f"{type_code}{material}".lower()
     return [
-        {**source_row, "meter_number": f"{base_meter_number}{CATEGORY_SUFFIXES[category]}"}
+        {
+            **source_row,
+            "meter_number": f"{base_meter_number}{CATEGORY_SUFFIXES[category]}",
+            "category_suffix": CATEGORY_SUFFIXES[category],
+        }
         for category in categories
     ]
 
@@ -193,10 +198,11 @@ def aggregate_consumption_rows(
         unit = str(source_row.get("Unit") or "").strip().casefold()
         base_quantity = _to_base_quantity(material_type, unit, quantity)
         for mapped_row in mapped_rows:
-            detail_meter_number = mapped_row["meter_number"]
-            category_suffix = detail_meter_number[len(MATERIAL_TYPE_CODES[material_type] + str(source_row["Material"]).strip()):]
-            summary_meter_number = f"{MATERIAL_TYPE_CODES[material_type]}_ALL{category_suffix}"
-            for meter_number in (detail_meter_number, summary_meter_number):
+            category_suffix = mapped_row["category_suffix"]
+            summary_meter_number = (
+                f"{MATERIAL_TYPE_CODES[material_type]}{ALL_MATERIALS_SUFFIX}{category_suffix}"
+            )
+            for meter_number in (mapped_row["meter_number"], summary_meter_number):
                 group_key = (meter_number, posting_date)
                 material_and_totals = grouped.get(group_key)
                 if material_and_totals is None:

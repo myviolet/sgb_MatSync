@@ -25,7 +25,7 @@ def test_consumption_movement_type_is_selected(movement_type: str) -> None:
     mapped_row = map_consumption_row(source_row)
 
     assert mapped_row is not None
-    assert mapped_row["meter_number"] == "SFE20056684"
+    assert mapped_row["meter_number"] == "sfe20056684"
     assert mapped_row["Qty"] == "1.25"
 
 
@@ -40,29 +40,29 @@ def test_moisture_movement_type_uses_separate_meter_number_suffix() -> None:
     )
 
     assert {row["meter_number"] for row in mapped_rows} == {
-        "COA20056684_P",
-        "COA20056684_MC",
+        "coa20056684_p",
+        "coa20056684_mc",
     }
 
 
 @pytest.mark.parametrize(
     ("material_type", "movement_type", "expected_suffixes"),
     [
-        ("煤炭", "101", ("_P",)), ("煤炭", "102", ("_P", "_MC")),
+        ("煤炭", "101", ("_p",)), ("煤炭", "102", ("_p", "_mc")),
         ("煤炭", "291", ("",)), ("煤炭", "292", ("",)),
-        ("兰炭", "101", ("_P",)), ("兰炭", "102", ("_P", "_MC")),
+        ("兰炭", "101", ("_p",)), ("兰炭", "102", ("_p", "_mc")),
         ("兰炭", "291", ("",)), ("兰炭", "292", ("",)),
-        ("焦炭", "101", ("_P",)), ("焦炭", "102", ("_P", "_MC")),
+        ("焦炭", "101", ("_p",)), ("焦炭", "102", ("_p", "_mc")),
         ("焦炭", "291", ("",)), ("焦炭", "292", ("",)),
-        ("硅铁", "105", ("_P",)), ("硅铁", "201", ("",)),
+        ("硅铁", "105", ("_p",)), ("硅铁", "201", ("",)),
         ("硅铁", "202", ("",)), ("硅铁", "291", ("",)), ("硅铁", "292", ("",)),
-        ("石灰石", "101", ("_P",)), ("石灰石", "102", ("_P", "_MC")),
+        ("石灰石", "101", ("_p",)), ("石灰石", "102", ("_p", "_mc")),
         ("石灰石", "291", ("",)), ("石灰石", "292", ("",)),
-        ("白云石", "101", ("_P",)), ("白云石", "102", ("_P", "_MC")),
+        ("白云石", "101", ("_p",)), ("白云石", "102", ("_p", "_mc")),
         ("白云石", "291", ("",)), ("白云石", "292", ("",)),
-        ("柴油", "101", ("_P",)), ("柴油", "201", ("",)),
-        ("废钢", "101", ("_P",)), ("废钢", "102", ("_P",)),
-        ("废钢", "105", ("_P",)), ("废钢", "201", ("",)),
+        ("柴油", "101", ("_p",)), ("柴油", "201", ("",)),
+        ("废钢", "101", ("_p",)), ("废钢", "102", ("_p",)),
+        ("废钢", "105", ("_p",)), ("废钢", "201", ("",)),
         ("废钢", "202", ("",)), ("废钢", "291", ("",)), ("废钢", "292", ("",)),
     ],
 )
@@ -95,7 +95,7 @@ def test_every_material_type_maps_to_expected_code() -> None:
             }
         )
         assert mapped_row is not None
-        assert mapped_row["meter_number"] == f"{expected_code}MAT001_P"
+        assert mapped_row["meter_number"] == f"{expected_code}mat001_p"
 
 
 @pytest.mark.parametrize(
@@ -158,8 +158,8 @@ def test_daily_rows_are_aggregated_by_material_and_posting_date() -> None:
     aggregates = aggregate_consumption_rows(rows)
 
     aggregates_by_key = {(item.meter_number, item.frozen_time): item for item in aggregates}
-    first_day = aggregates_by_key[("SEMMAT-A", datetime.strptime("20261009", "%Y%m%d").date())]
-    all_day = aggregates_by_key[("SEM_ALL", datetime.strptime("20261009", "%Y%m%d").date())]
+    first_day = aggregates_by_key[("semmat-a", datetime.strptime("20261009", "%Y%m%d").date())]
+    all_day = aggregates_by_key[("sem_all", datetime.strptime("20261009", "%Y%m%d").date())]
     assert len(aggregates) == 4
     assert first_day.dvalue == Decimal("3")
     assert first_day.price == Decimal("15.70")
@@ -195,11 +195,11 @@ def test_daily_aggregation_separates_different_material_numbers() -> None:
 
     aggregates = aggregate_consumption_rows(rows)
 
-    assert {item.meter_number for item in aggregates} == {"SFEMAT-A", "SFEMAT-B", "SFE_ALL"}
+    assert {item.meter_number for item in aggregates} == {"sfemat-a", "sfemat-b", "sfe_all"}
     assert {item.dvalue for item in aggregates} == {
         Decimal("1.000"), Decimal("2.000"), Decimal("3.000")
     }
-    all_materials = next(item for item in aggregates if item.meter_number == "SFE_ALL")
+    all_materials = next(item for item in aggregates if item.meter_number == "sfe_all")
     assert all_materials.dvalue == Decimal("3.000")
     assert all_materials.price == Decimal("30")
 
@@ -232,12 +232,12 @@ def test_moisture_and_usage_rows_are_aggregated_separately() -> None:
 
     assert len(aggregates) == 6
     aggregates_by_meter = {item.meter_number: item for item in aggregates}
-    assert aggregates_by_meter["COAMAT-A"].dvalue == Decimal("1.000")
-    assert aggregates_by_meter["COAMAT-A_P"].dvalue == Decimal("0.500")
-    assert aggregates_by_meter["COAMAT-A_MC"].dvalue == Decimal("0.500")
-    assert aggregates_by_meter["COA_ALL"].dvalue == Decimal("1.000")
-    assert aggregates_by_meter["COA_ALL_P"].dvalue == Decimal("0.500")
-    assert aggregates_by_meter["COA_ALL_MC"].dvalue == Decimal("0.500")
+    assert aggregates_by_meter["coamat-a"].dvalue == Decimal("1.000")
+    assert aggregates_by_meter["coamat-a_p"].dvalue == Decimal("0.500")
+    assert aggregates_by_meter["coamat-a_mc"].dvalue == Decimal("0.500")
+    assert aggregates_by_meter["coa_all"].dvalue == Decimal("1.000")
+    assert aggregates_by_meter["coa_all_p"].dvalue == Decimal("0.500")
+    assert aggregates_by_meter["coa_all_mc"].dvalue == Decimal("0.500")
 
 
 def test_movement_102_is_aggregated_as_both_purchase_and_moisture() -> None:
@@ -255,7 +255,7 @@ def test_movement_102_is_aggregated_as_both_purchase_and_moisture() -> None:
     aggregates = aggregate_consumption_rows([row])
 
     assert {item.meter_number for item in aggregates} == {
-        "COAMAT-A_P", "COAMAT-A_MC", "COA_ALL_P", "COA_ALL_MC"
+        "coamat-a_p", "coamat-a_mc", "coa_all_p", "coa_all_mc"
     }
     assert all(item.dvalue == Decimal("1.000") for item in aggregates)
     assert all(item.price == Decimal("10") for item in aggregates)
@@ -288,11 +288,11 @@ def test_daily_all_group_combines_purchase_rows_across_material_numbers() -> Non
     aggregates = aggregate_consumption_rows(rows)
     by_meter = {item.meter_number: item for item in aggregates}
 
-    assert by_meter["COA_ALL_P"].dvalue == Decimal("3.000")
-    assert by_meter["COA_ALL_P"].price == Decimal("30")
-    assert by_meter["COA_ALL_P"].source_rows == 2
-    assert by_meter["COAMAT-A_P"].dvalue == Decimal("1.000")
-    assert by_meter["COAMAT-B_P"].dvalue == Decimal("2.000")
+    assert by_meter["coa_all_p"].dvalue == Decimal("3.000")
+    assert by_meter["coa_all_p"].price == Decimal("30")
+    assert by_meter["coa_all_p"].source_rows == 2
+    assert by_meter["coamat-a_p"].dvalue == Decimal("1.000")
+    assert by_meter["coamat-b_p"].dvalue == Decimal("2.000")
 
 
 @pytest.mark.parametrize(
@@ -429,7 +429,7 @@ def test_target_row_sets_write_time_and_stat_type_and_omits_period_fields() -> N
 
     assert target_row == {
         "frozen_time": datetime(2026, 10, 9),
-        "meter_number": "SFEMAT001",
+        "meter_number": "sfemat001",
         "dvalue": Decimal("0.0025"),
         "price": Decimal("12.30"),
         "update_at": written_at,
