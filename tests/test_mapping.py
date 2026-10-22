@@ -351,6 +351,52 @@ def test_coke_quantity_is_kept_in_kilograms_while_others_stay_in_tonnes() -> Non
     assert aggregate_for("煤炭").dvalue == Decimal("2.5")
 
 
+def test_usage_quantity_is_stored_as_a_positive_value() -> None:
+    aggregates = aggregate_consumption_rows(
+        [
+            {
+                "ID": "usage-row",
+                "MovementType": "201",
+                "MaterialType": "硅铁",
+                "Material": "MAT001",
+                "PostingDate": "20261009",
+                "Qty": "-2.5",
+                "Unit": "kg",
+                "CNY": "12.30",
+            }
+        ]
+    )
+
+    by_meter = {item.meter_number: item for item in aggregates}
+
+    assert by_meter["sfemat001"].dvalue == Decimal("0.0025")
+    assert by_meter["sfe_all"].dvalue == Decimal("0.0025")
+
+
+def test_purchase_keeps_sign_while_moisture_turns_positive() -> None:
+    aggregates = aggregate_consumption_rows(
+        [
+            {
+                "ID": "purchase-moisture-row",
+                "MovementType": "102",
+                "MaterialType": "煤炭",
+                "Material": "MAT001",
+                "PostingDate": "20261009",
+                "Qty": "-1000",
+                "Unit": "kg",
+                "CNY": "10",
+            }
+        ]
+    )
+
+    by_meter = {item.meter_number: item for item in aggregates}
+
+    assert by_meter["coamat001_p"].dvalue == Decimal("-1.000")
+    assert by_meter["coamat001_mc"].dvalue == Decimal("1.000")
+    assert by_meter["coa_all_p"].dvalue == Decimal("-1.000")
+    assert by_meter["coa_all_mc"].dvalue == Decimal("1.000")
+
+
 def test_unsupported_unit_fails_instead_of_misaggregating() -> None:
     with pytest.raises(ValueError, match="Unsupported Unit"):
         aggregate_consumption_rows(
@@ -406,7 +452,8 @@ def test_grouped_thousands_separators_are_parsed_as_decimal_numbers() -> None:
         ]
     )[0]
 
-    assert aggregate.dvalue == Decimal("-2.000")
+    # MovementType 201 is a usage movement, so the negative quantity is stored as positive.
+    assert aggregate.dvalue == Decimal("2.000")
     assert aggregate.price == Decimal("-10709.36")
 
 

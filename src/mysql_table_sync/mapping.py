@@ -71,6 +71,8 @@ MATERIAL_MOVEMENT_CATEGORIES = {
 }
 CATEGORY_SUFFIXES = {"usage": "", "purchase": "_p", "moisture": "_mc"}
 ALL_MATERIALS_SUFFIX = "_all"
+# Source records usage and moisture movements with negative quantities; the target expects positive values.
+ABSOLUTE_VALUE_CATEGORIES = frozenset({"usage", "moisture"})
 KG_TO_TONNES = Decimal("0.001")
 DIESEL_DENSITY_KG_PER_LITRE = Decimal("0.831")
 MATERIAL_SOURCE_UNITS = {
@@ -173,8 +175,8 @@ def map_consumption_rows(
     return [
         {
             **source_row,
+            "category": category,
             "meter_number": f"{base_meter_number}{CATEGORY_SUFFIXES[category]}",
-            "category_suffix": CATEGORY_SUFFIXES[category],
         }
         for category in categories
     ]
@@ -215,9 +217,15 @@ def aggregate_consumption_rows(
         unit = str(source_row.get("Unit") or "").strip().casefold()
         base_quantity = _to_base_quantity(material_type, unit, quantity)
         for mapped_row in mapped_rows:
-            category_suffix = mapped_row["category_suffix"]
+            category = mapped_row["category"]
             summary_meter_number = (
-                f"{MATERIAL_TYPE_CODES[material_type]}{ALL_MATERIALS_SUFFIX}{category_suffix}"
+                f"{MATERIAL_TYPE_CODES[material_type]}"
+                f"{ALL_MATERIALS_SUFFIX}{CATEGORY_SUFFIXES[category]}"
+            )
+            quantity = (
+                abs(base_quantity)
+                if category in ABSOLUTE_VALUE_CATEGORIES
+                else base_quantity
             )
             for meter_number in (mapped_row["meter_number"], summary_meter_number):
                 group_key = (meter_number, posting_date)
@@ -227,7 +235,7 @@ def aggregate_consumption_rows(
                     grouped[group_key] = (material_type, aggregate)
                 else:
                     _, aggregate = material_and_totals
-                aggregate.quantity += base_quantity
+                aggregate.quantity += quantity
                 aggregate.price += amount
                 aggregate.source_rows += 1
 
