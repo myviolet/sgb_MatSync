@@ -71,7 +71,9 @@ MATERIAL_MOVEMENT_CATEGORIES = {
 }
 CATEGORY_SUFFIXES = {"usage": "", "purchase": "_p", "moisture": "_mc"}
 ALL_MATERIALS_SUFFIX = "_all"
-# Source records usage and moisture movements with negative quantities; the target expects positive values.
+# Source records usage and moisture movements with negative quantities, and reverses a posting with
+# an equal opposite entry. The category total is therefore netted first and made positive afterwards,
+# so reversals cancel instead of being counted twice.
 ABSOLUTE_VALUE_CATEGORIES = frozenset({"usage", "moisture"})
 KG_TO_TONNES = Decimal("0.001")
 DIESEL_DENSITY_KG_PER_LITRE = Decimal("0.831")
@@ -115,6 +117,7 @@ class _DailyTotals:
     quantity: Decimal = Decimal("0")
     price: Decimal = Decimal("0")
     source_rows: int = 0
+    absolute_value: bool = False
 
 
 def _parse_decimal(value: Any, field_name: str, source_id: Any) -> Decimal:
@@ -234,11 +237,7 @@ def aggregate_consumption_rows(
                 f"{MATERIAL_TYPE_CODES[material_type]}"
                 f"{ALL_MATERIALS_SUFFIX}{CATEGORY_SUFFIXES[category]}"
             )
-            quantity = (
-                abs(base_quantity)
-                if category in ABSOLUTE_VALUE_CATEGORIES
-                else base_quantity
-            )
+            needs_absolute_value = category in ABSOLUTE_VALUE_CATEGORIES
             meter_numbers = [mapped_row["meter_number"]]
             if mapped_row["contributes_to_summary"]:
                 meter_numbers.append(summary_meter_number)
@@ -247,10 +246,11 @@ def aggregate_consumption_rows(
                 material_and_totals = grouped.get(group_key)
                 if material_and_totals is None:
                     aggregate = _DailyTotals()
+                    aggregate.absolute_value = needs_absolute_value
                     grouped[group_key] = (material_type, aggregate)
                 else:
                     _, aggregate = material_and_totals
-                aggregate.quantity += quantity
+                aggregate.quantity += base_quantity
                 aggregate.price += amount
                 aggregate.source_rows += 1
 
@@ -259,7 +259,7 @@ def aggregate_consumption_rows(
             material_type=material_type,
             meter_number=meter_number,
             frozen_time=posting_date,
-            dvalue=values.quantity,
+            dvalue=abs(values.quantity) if values.absolute_value else values.quantity,
             price=values.price,
             source_rows=values.source_rows,
         )

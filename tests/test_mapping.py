@@ -467,6 +467,81 @@ def test_cost_object_usage_is_stored_separately_without_double_counting_the_all_
     assert by_meter["sfe_all"].dvalue == Decimal("1.000")
 
 
+def test_usage_reversal_is_netted_before_the_value_is_made_positive() -> None:
+    """A posting plus its equal opposite reversal must cancel instead of adding up."""
+    aggregates = aggregate_consumption_rows(
+        [
+            {
+                "ID": "posting",
+                "MovementType": "292",
+                "MaterialType": "兰炭",
+                "Material": "20067733",
+                "PostingDate": "20251231",
+                "Qty": "226,821",
+                "Unit": "TO",
+                "CNY": "1",
+            },
+            {
+                "ID": "extra",
+                "MovementType": "292",
+                "MaterialType": "兰炭",
+                "Material": "20067733",
+                "PostingDate": "20251231",
+                "Qty": "227",
+                "Unit": "TO",
+                "CNY": "1",
+            },
+            {
+                "ID": "reversal",
+                "MovementType": "291",
+                "MaterialType": "兰炭",
+                "Material": "20067733",
+                "PostingDate": "20251231",
+                "Qty": "-226,821",
+                "Unit": "TO",
+                "CNY": "1",
+            },
+        ]
+    )
+
+    by_meter = {item.meter_number: item for item in aggregates}
+
+    assert by_meter["sem20067733"].dvalue == Decimal("227")
+    assert by_meter["sem_all"].dvalue == Decimal("227")
+
+
+def test_reversal_dominated_usage_is_still_stored_positive() -> None:
+    aggregates = aggregate_consumption_rows(
+        [
+            {
+                "ID": "issue",
+                "MovementType": "291",
+                "MaterialType": "硅铁",
+                "Material": "MAT001",
+                "PostingDate": "20261009",
+                "Qty": "-100",
+                "Unit": "kg",
+                "CNY": "1",
+            },
+            {
+                "ID": "partial-reversal",
+                "MovementType": "292",
+                "MaterialType": "硅铁",
+                "Material": "MAT001",
+                "PostingDate": "20261009",
+                "Qty": "30",
+                "Unit": "kg",
+                "CNY": "1",
+            },
+        ]
+    )
+
+    by_meter = {item.meter_number: item for item in aggregates}
+
+    assert by_meter["sfemat001"].dvalue == Decimal("0.070")
+    assert by_meter["sfe_all"].dvalue == Decimal("0.070")
+
+
 def test_unsupported_unit_fails_instead_of_misaggregating() -> None:
     with pytest.raises(ValueError, match="Unsupported Unit"):
         aggregate_consumption_rows(
