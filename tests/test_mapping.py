@@ -397,6 +397,76 @@ def test_purchase_keeps_sign_while_moisture_turns_positive() -> None:
     assert by_meter["coa_all_mc"].dvalue == Decimal("1.000")
 
 
+def test_usage_row_with_cost_object_gets_an_extra_plant_specific_meter() -> None:
+    mapped_rows = map_consumption_rows(
+        {
+            "ID": "row-1",
+            "MovementType": "201",
+            "MaterialType": "硅铁",
+            "Material": "20056684",
+            "CO": "PLANT-1",
+        }
+    )
+
+    assert {row["meter_number"] for row in mapped_rows} == {
+        "sfe20056684",
+        "sfe20056684plant-1",
+    }
+
+
+def test_empty_cost_object_does_not_create_an_extra_meter() -> None:
+    mapped_rows = map_consumption_rows(
+        {
+            "ID": "row-1",
+            "MovementType": "201",
+            "MaterialType": "硅铁",
+            "Material": "20056684",
+            "CO": "   ",
+        }
+    )
+
+    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684"}
+
+
+def test_purchase_rows_are_not_split_by_cost_object() -> None:
+    mapped_rows = map_consumption_rows(
+        {
+            "ID": "row-1",
+            "MovementType": "101",
+            "MaterialType": "煤炭",
+            "Material": "MAT001",
+            "CO": "PLANT-1",
+        }
+    )
+
+    assert {row["meter_number"] for row in mapped_rows} == {"coamat001_p"}
+
+
+def test_cost_object_usage_is_stored_separately_without_double_counting_the_all_total() -> None:
+    aggregates = aggregate_consumption_rows(
+        [
+            {
+                "ID": "row-1",
+                "MovementType": "201",
+                "MaterialType": "硅铁",
+                "Material": "MAT001",
+                "CO": "PLANT-1",
+                "PostingDate": "20261009",
+                "Qty": "1000",
+                "Unit": "kg",
+                "CNY": "10",
+            }
+        ]
+    )
+
+    by_meter = {item.meter_number: item for item in aggregates}
+
+    assert set(by_meter) == {"sfemat001", "sfemat001plant-1", "sfe_all"}
+    assert by_meter["sfemat001plant-1"].dvalue == Decimal("1.000")
+    assert by_meter["sfemat001plant-1"].price == Decimal("10")
+    assert by_meter["sfe_all"].dvalue == Decimal("1.000")
+
+
 def test_unsupported_unit_fails_instead_of_misaggregating() -> None:
     with pytest.raises(ValueError, match="Unsupported Unit"):
         aggregate_consumption_rows(

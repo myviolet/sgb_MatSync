@@ -159,6 +159,7 @@ def map_consumption_rows(
     source_id = str(source_row.get("ID") or "").strip()
     material_type = str(source_row.get("MaterialType") or "").strip()
     material = str(source_row.get("Material") or "").strip()
+    cost_object = str(source_row.get("CO") or "").strip()
 
     if source_id in excluded_ids:
         return []
@@ -172,14 +173,25 @@ def map_consumption_rows(
         return []
 
     base_meter_number = f"{type_code}{material}".lower()
-    return [
+    mapped_rows = [
         {
             **source_row,
             "category": category,
             "meter_number": f"{base_meter_number}{CATEGORY_SUFFIXES[category]}",
+            "contributes_to_summary": True,
         }
         for category in categories
     ]
+    if cost_object and "usage" in categories:
+        mapped_rows.append(
+            {
+                **source_row,
+                "category": "usage",
+                "meter_number": f"{base_meter_number}{cost_object}".lower(),
+                "contributes_to_summary": False,
+            }
+        )
+    return mapped_rows
 
 
 def map_consumption_row(
@@ -227,7 +239,10 @@ def aggregate_consumption_rows(
                 if category in ABSOLUTE_VALUE_CATEGORIES
                 else base_quantity
             )
-            for meter_number in (mapped_row["meter_number"], summary_meter_number):
+            meter_numbers = [mapped_row["meter_number"]]
+            if mapped_row["contributes_to_summary"]:
+                meter_numbers.append(summary_meter_number)
+            for meter_number in meter_numbers:
                 group_key = (meter_number, posting_date)
                 material_and_totals = grouped.get(group_key)
                 if material_and_totals is None:
