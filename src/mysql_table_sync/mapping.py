@@ -75,6 +75,10 @@ ALL_MATERIALS_SUFFIX = "_all"
 # an equal opposite entry. The category total is therefore netted first and made positive afterwards,
 # so reversals cancel instead of being counted twice.
 ABSOLUTE_VALUE_CATEGORIES = frozenset({"usage", "moisture"})
+# Extra usage rows keyed by a cost object field, stored alongside the plain usage row.
+# A field mapped to None applies to every material type; otherwise it is restricted to those listed.
+# "CO" identifies plant / process steps, "CC" identifies the diesel (柴油) cost centre.
+COST_OBJECT_SOURCE_FIELDS = {"CO": None, "CC": frozenset({"柴油"})}
 KG_TO_TONNES = Decimal("0.001")
 DIESEL_DENSITY_KG_PER_LITRE = Decimal("0.831")
 MATERIAL_SOURCE_UNITS = {
@@ -162,7 +166,6 @@ def map_consumption_rows(
     source_id = str(source_row.get("ID") or "").strip()
     material_type = str(source_row.get("MaterialType") or "").strip()
     material = str(source_row.get("Material") or "").strip()
-    cost_object = str(source_row.get("CO") or "").strip()
 
     if source_id in excluded_ids:
         return []
@@ -185,15 +188,21 @@ def map_consumption_rows(
         }
         for category in categories
     ]
-    if cost_object and "usage" in categories:
-        mapped_rows.append(
-            {
-                **source_row,
-                "category": "usage",
-                "meter_number": f"{base_meter_number}{cost_object}".lower(),
-                "contributes_to_summary": False,
-            }
-        )
+    if "usage" in categories:
+        for field, allowed_material_types in COST_OBJECT_SOURCE_FIELDS.items():
+            cost_object = str(source_row.get(field) or "").strip()
+            if not cost_object:
+                continue
+            if allowed_material_types is not None and material_type not in allowed_material_types:
+                continue
+            mapped_rows.append(
+                {
+                    **source_row,
+                    "category": "usage",
+                    "meter_number": f"{base_meter_number}{cost_object}".lower(),
+                    "contributes_to_summary": False,
+                }
+            )
     return mapped_rows
 
 

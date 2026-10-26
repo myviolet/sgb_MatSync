@@ -428,6 +428,70 @@ def test_empty_cost_object_does_not_create_an_extra_meter() -> None:
     assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684"}
 
 
+def test_diesel_usage_with_cost_centre_gets_an_extra_meter() -> None:
+    mapped_rows = map_consumption_rows(
+        {
+            "ID": "row-1",
+            "MovementType": "201",
+            "MaterialType": "柴油",
+            "Material": "20067733",
+            "CC": "CC-STEEL",
+        }
+    )
+
+    assert {row["meter_number"] for row in mapped_rows} == {
+        "die20067733",
+        "die20067733cc-steel",
+    }
+
+
+def test_diesel_row_with_both_cost_fields_writes_both_extra_rows() -> None:
+    mapped_rows = map_consumption_rows(
+        {
+            "ID": "row-1",
+            "MovementType": "201",
+            "MaterialType": "柴油",
+            "Material": "20067733",
+            "CO": "PLANT-1",
+            "CC": "CC-STEEL",
+        }
+    )
+
+    assert {row["meter_number"] for row in mapped_rows} == {
+        "die20067733",
+        "die20067733plant-1",
+        "die20067733cc-steel",
+    }
+
+
+def test_cost_centre_is_only_used_for_diesel() -> None:
+    mapped_rows = map_consumption_rows(
+        {
+            "ID": "row-1",
+            "MovementType": "201",
+            "MaterialType": "硅铁",
+            "Material": "20056684",
+            "CC": "CC-STEEL",
+        }
+    )
+
+    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684"}
+
+
+def test_diesel_purchase_is_not_split_by_cost_centre() -> None:
+    mapped_rows = map_consumption_rows(
+        {
+            "ID": "row-1",
+            "MovementType": "101",
+            "MaterialType": "柴油",
+            "Material": "20067733",
+            "CC": "CC-STEEL",
+        }
+    )
+
+    assert {row["meter_number"] for row in mapped_rows} == {"die20067733_p"}
+
+
 def test_purchase_rows_are_not_split_by_cost_object() -> None:
     mapped_rows = map_consumption_rows(
         {
