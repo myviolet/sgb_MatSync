@@ -71,10 +71,9 @@ MATERIAL_MOVEMENT_CATEGORIES = {
 }
 CATEGORY_SUFFIXES = {"usage": "", "purchase": "_p", "moisture": "_mc"}
 ALL_MATERIALS_SUFFIX = "_all"
-# Source records usage and moisture movements with negative quantities, and reverses a posting with
-# an equal opposite entry. The category total is therefore netted first and made positive afterwards,
-# so reversals cancel instead of being counted twice.
-ABSOLUTE_VALUE_CATEGORIES = frozenset({"usage", "moisture"})
+# Source reverses a posting with an equal opposite entry, so every category total is netted by sign
+# first. Moisture is stored as a positive value afterwards; usage keeps the signed net.
+ABSOLUTE_VALUE_CATEGORIES = frozenset({"moisture"})
 # Extra usage rows keyed by a cost object field, stored alongside the plain usage row.
 # A field mapped to None applies to every material type; otherwise it is restricted to those listed.
 # "CO" identifies plant / process steps, "CC" identifies the diesel (柴油) cost centre.

@@ -351,7 +351,7 @@ def test_coke_quantity_is_kept_in_kilograms_while_others_stay_in_tonnes() -> Non
     assert aggregate_for("煤炭").dvalue == Decimal("2.5")
 
 
-def test_usage_quantity_is_stored_as_a_positive_value() -> None:
+def test_usage_quantity_keeps_the_sign_of_the_source() -> None:
     aggregates = aggregate_consumption_rows(
         [
             {
@@ -369,8 +369,8 @@ def test_usage_quantity_is_stored_as_a_positive_value() -> None:
 
     by_meter = {item.meter_number: item for item in aggregates}
 
-    assert by_meter["sfemat001"].dvalue == Decimal("0.0025")
-    assert by_meter["sfe_all"].dvalue == Decimal("0.0025")
+    assert by_meter["sfemat001"].dvalue == Decimal("-0.0025")
+    assert by_meter["sfe_all"].dvalue == Decimal("-0.0025")
 
 
 def test_purchase_keeps_sign_while_moisture_turns_positive() -> None:
@@ -531,7 +531,7 @@ def test_cost_object_usage_is_stored_separately_without_double_counting_the_all_
     assert by_meter["sfe_all"].dvalue == Decimal("1.000")
 
 
-def test_usage_reversal_is_netted_before_the_value_is_made_positive() -> None:
+def test_usage_reversal_cancels_instead_of_adding_up() -> None:
     """A posting plus its equal opposite reversal must cancel instead of adding up."""
     aggregates = aggregate_consumption_rows(
         [
@@ -574,7 +574,7 @@ def test_usage_reversal_is_netted_before_the_value_is_made_positive() -> None:
     assert by_meter["sem_all"].dvalue == Decimal("227")
 
 
-def test_reversal_dominated_usage_is_still_stored_positive() -> None:
+def test_reversal_dominated_usage_keeps_its_negative_net() -> None:
     aggregates = aggregate_consumption_rows(
         [
             {
@@ -602,8 +602,8 @@ def test_reversal_dominated_usage_is_still_stored_positive() -> None:
 
     by_meter = {item.meter_number: item for item in aggregates}
 
-    assert by_meter["sfemat001"].dvalue == Decimal("0.070")
-    assert by_meter["sfe_all"].dvalue == Decimal("0.070")
+    assert by_meter["sfemat001"].dvalue == Decimal("-0.070")
+    assert by_meter["sfe_all"].dvalue == Decimal("-0.070")
 
 
 def test_unsupported_unit_fails_instead_of_misaggregating() -> None:
@@ -661,8 +661,8 @@ def test_grouped_thousands_separators_are_parsed_as_decimal_numbers() -> None:
         ]
     )[0]
 
-    # MovementType 201 is a usage movement, so the negative quantity is stored as positive.
-    assert aggregate.dvalue == Decimal("2.000")
+    # MovementType 201 is a usage movement, so the signed quantity is stored unchanged.
+    assert aggregate.dvalue == Decimal("-2.000")
     assert aggregate.price == Decimal("-10709.36")
 
 
