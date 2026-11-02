@@ -1,9 +1,11 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import create_engine, text
 
 from mysql_table_sync.config import Settings
+from mysql_table_sync.exceptions import SyncError
 from mysql_table_sync.sources import (
     PIG_IRON_SALES_PROFILE,
     PRODUCTIVITY_PROFILE,
@@ -334,6 +336,45 @@ def test_profiles_keep_independent_state_rows() -> None:
 
         assert state_rows == ["SAP_PG_Sales->record_frozen_data", "SAP_Productivity->record_frozen_data"]
         assert rows == [("pig226460", Decimal("1.00")), ("pipe", Decimal("2.00"))]
+    finally:
+        source_engine.dispose()
+        target_engine.dispose()
+
+
+def test_numeric_cursor_reset_is_detected() -> None:
+    """A truncated-and-reloaded source must fail loudly instead of silently skipping."""
+    source_engine = create_engine("sqlite://")
+    target_engine = create_engine("sqlite://")
+    settings = Settings("sqlite://", "sqlite://")
+    _create_new_source_tables(source_engine)
+    _create_target_table(target_engine)
+    _insert_productivity_row(source_engine, "20260710", "Iron", "1.00")
+    _insert_productivity_row(source_engine, "20260711", "Iron", "2.00")
+
+    try:
+        service = TableSyncService(
+            source_engine, target_engine, settings, profile=PRODUCTIVITY_PROFILE
+        )
+        service.run()
+
+        # Simulate a reload that reset the auto-increment counter below the cursor.
+        with target_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE _mysql_table_sync_state SET last_id = '999' "
+                    "WHERE sync_name = 'SAP_Productivity->record_frozen_data'"
+                )
+            )
+
+        with pytest.raises(SyncError, match="reset the cursor"):
+            service.run()
+
+        # A cleared source table is the same failure mode (MAX(id) is NULL).
+        with source_engine.begin() as connection:
+            connection.execute(text("DELETE FROM SAP_Productivity"))
+
+        with pytest.raises(SyncError, match="reset the cursor"):
+            service.run()
     finally:
         source_engine.dispose()
         target_engine.dispose()

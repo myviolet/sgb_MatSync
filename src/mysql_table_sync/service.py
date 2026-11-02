@@ -113,6 +113,15 @@ class TableSyncService:
             if state_exists is None:
                 connection.execute(insert(state_table).values(sync_name=sync_name, last_id=None))
 
+        self._check_cursor_regression(
+            source_engine=self._source_engine,
+            target_engine=self._target_engine,
+            state_table=state_table,
+            sync_name=sync_name,
+            source_id=source_id,
+            profile=profile,
+        )
+
         rows_read = 0
         rows_written = 0
         while True:
@@ -223,6 +232,40 @@ class TableSyncService:
             rows_written,
         )
         return report
+
+    @staticmethod
+    @staticmethod
+    def _check_cursor_regression(
+        source_engine: Engine,
+        target_engine: Engine,
+        state_table: Table,
+        sync_name: str,
+        source_id,
+        profile: SyncProfile,
+    ) -> None:
+        """Fail loudly when a numeric cursor points beyond the current source MAX(id).
+
+        A truncated-and-reloaded source table would otherwise look like
+        "no new rows" and silently stop syncing forever.
+        """
+        if not profile.numeric_primary_key:
+            return
+        with target_engine.connect() as connection:
+            last_id = connection.execute(
+                select(state_table.c.last_id).where(state_table.c.sync_name == sync_name)
+            ).scalar_one()
+        if last_id is None:
+            return
+        with source_engine.connect() as connection:
+            max_id = connection.execute(select(func.max(source_id))).scalar()
+        if max_id is None or int(max_id) < int(last_id):
+            raise SyncError(
+                f"Source primary key appears to have been reset: cursor {last_id} exceeds "
+                f"MAX(id) {max_id if max_id is not None else 'NULL'} for {profile.source_table}. "
+                f"If the source table was reloaded, reset the cursor with: "
+                f"UPDATE {SYNC_STATE_TABLE} SET last_id = NULL WHERE sync_name = '{sync_name}'; "
+                f"then rerun a full sync."
+            )
 
     @staticmethod
     def _validate_source_ids(
