@@ -3,13 +3,15 @@
 from dataclasses import dataclass
 from datetime import datetime
 import logging
+from typing import Any
 
 from sqlalchemy import Column, Engine, MetaData, String, Table, func, insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from mysql_table_sync.config import Settings
 from mysql_table_sync.exceptions import SyncError
-from mysql_table_sync.mapping import aggregate_consumption_rows, build_target_row
+from mysql_table_sync.mapping import build_target_row
+from mysql_table_sync.sources import SyncProfile, material_move_profile
 
 SYNC_STATE_TABLE = "_mysql_table_sync_state"
 logger = logging.getLogger(__name__)
@@ -24,25 +26,34 @@ class SyncReport:
 
 
 class TableSyncService:
-    """Synchronize eligible source rows using the source ID as a high-water cursor."""
+    """Synchronize eligible source rows using the source primary key as a high-water cursor."""
 
-    def __init__(self, source_engine: Engine, target_engine: Engine, settings: Settings) -> None:
+    def __init__(
+        self,
+        source_engine: Engine,
+        target_engine: Engine,
+        settings: Settings,
+        profile: SyncProfile | None = None,
+    ) -> None:
         self._source_engine = source_engine
         self._target_engine = target_engine
         self._settings = settings
+        self._profile = profile or material_move_profile(settings)
 
     def run(self) -> SyncReport:
         """Run an initial full scan, then continue from the last committed source ID."""
+        profile = self._profile
         logger.info(
-            "Inspecting tables source_table=%s target_table=%s",
-            self._settings.source_table,
+            "Inspecting tables profile=%s source_table=%s target_table=%s",
+            profile.name,
+            profile.source_table,
             self._settings.target_table,
         )
         source_metadata = MetaData()
         target_metadata = MetaData()
         try:
             source_table = Table(
-                self._settings.source_table,
+                profile.source_table,
                 source_metadata,
                 autoload_with=self._source_engine,
             )
@@ -54,20 +65,21 @@ class TableSyncService:
         except SQLAlchemyError as error:
             raise SyncError(f"Could not inspect source or target table: {error}") from error
 
-        source_id_name = self._settings.source_primary_key
-        required_source_columns = {
-            source_id_name,
-            "MovementType",
-            "MaterialType",
-            "Material",
-            "PostingDate",
-            "Qty",
-            "Unit",
-            "CNY",
-        }
+        date_column = next(
+            (name for name in profile.date_columns if name in source_table.c), None
+        )
+        source_id_name = profile.source_primary_key
+        required_source_columns = {source_id_name, *profile.required_columns}
+        if date_column is not None:
+            required_source_columns.add(date_column)
         missing_source_columns = required_source_columns - set(source_table.c.keys())
         if missing_source_columns:
             raise SyncError(f"Source table is missing columns: {sorted(missing_source_columns)}")
+        if date_column is None:
+            raise SyncError(
+                f"Source table is missing a posting date column, "
+                f"tried: {list(profile.date_columns)}"
+            )
 
         target_key_names = ("meter_number", "frozen_time", "stat_type")
         required_target_columns = {
@@ -82,7 +94,7 @@ class TableSyncService:
 
         source_id = source_table.c[source_id_name]
         self._validate_source_ids(
-            self._source_engine, source_id, self._settings.source_excluded_ids
+            self._source_engine, source_id, profile.excluded_ids
         )
 
         state_metadata = MetaData()
@@ -93,7 +105,7 @@ class TableSyncService:
             Column("last_id", String(255), nullable=True),
         )
         state_metadata.create_all(self._target_engine, checkfirst=True)
-        sync_name = f"{self._settings.source_table}->{self._settings.target_table}"
+        sync_name = f"{profile.source_table}->{self._settings.target_table}"
         with self._target_engine.begin() as connection:
             state_exists = connection.execute(
                 select(state_table.c.sync_name).where(state_table.c.sync_name == sync_name)
@@ -109,14 +121,17 @@ class TableSyncService:
                     select(state_table.c.last_id).where(state_table.c.sync_name == sync_name)
                 ).scalar_one()
 
+            cursor_value: Any = last_id
+            if profile.numeric_primary_key and last_id is not None:
+                cursor_value = int(last_id)
             source_query = select(source_table).order_by(source_id.asc()).limit(
                 self._settings.batch_size
             )
-            if last_id is not None:
-                source_query = source_query.where(source_id > last_id)
-            if self._settings.source_excluded_ids:
+            if cursor_value is not None:
+                source_query = source_query.where(source_id > cursor_value)
+            if profile.excluded_ids:
                 source_query = source_query.where(
-                    source_id.notin_(self._settings.source_excluded_ids)
+                    source_id.notin_(profile.excluded_ids)
                 )
             with self._source_engine.connect() as connection:
                 source_rows = [dict(row) for row in connection.execute(source_query).mappings()]
@@ -124,9 +139,8 @@ class TableSyncService:
                 break
 
             batch_last_id = str(source_rows[-1][source_id_name])
-            aggregates = aggregate_consumption_rows(
-                source_rows, excluded_ids=self._settings.source_excluded_ids
-            )
+            result = profile.aggregate(source_rows, date_column=date_column)
+            aggregates = result.aggregates
             written_at = datetime.now()
             with self._target_engine.begin() as connection:
                 locked_last_id = connection.execute(
@@ -180,23 +194,31 @@ class TableSyncService:
                 )
 
             logger.info(
-                "Committed sync batch rows_read=%s aggregates_written=%s last_id=%s",
+                "Committed sync batch profile=%s rows_read=%s aggregates_written=%s last_id=%s",
+                profile.name,
                 len(source_rows),
                 len(aggregates),
                 batch_last_id,
             )
+            if result.skipped:
+                logger.info(
+                    "Skipped dirty source rows profile=%s %s",
+                    profile.name,
+                    " ".join(f"{reason}={count}" for reason, count in sorted(result.skipped.items())),
+                )
 
             rows_read += len(source_rows)
             rows_written += len(aggregates)
 
         report = SyncReport(
-            source_table=self._settings.source_table,
+            source_table=profile.source_table,
             target_table=self._settings.target_table,
             rows_read=rows_read,
             rows_written=rows_written,
         )
         logger.info(
-            "Sync service finished rows_read=%s aggregates_written=%s",
+            "Sync service finished profile=%s rows_read=%s aggregates_written=%s",
+            profile.name,
             rows_read,
             rows_written,
         )

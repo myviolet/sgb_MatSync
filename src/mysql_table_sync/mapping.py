@@ -5,7 +5,16 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import re
-from typing import Any
+from typing import Any, Protocol
+
+
+class TargetAggregate(Protocol):
+    """Fields required to build a record_frozen_data row."""
+
+    frozen_time: date
+    meter_number: str
+    dvalue: Decimal
+    price: Decimal
 
 MATERIAL_TYPE_CODES = {
     "硅铁": "sfe",
@@ -216,6 +225,7 @@ def map_consumption_row(
 def aggregate_consumption_rows(
     source_rows: Iterable[Mapping[str, Any]],
     excluded_ids: tuple[str, ...] = ("OnlyKey",),
+    date_column: str = "PostingDate",
 ) -> list[ConsumptionAggregate]:
     """Filter rows and combine quantity/CNY by mapped material number and day."""
     grouped: dict[tuple[str, date], tuple[str, _DailyTotals]] = {}
@@ -228,7 +238,7 @@ def aggregate_consumption_rows(
         material_type = str(source_row["MaterialType"]).strip()
         try:
             posting_date = datetime.strptime(
-                str(source_row.get("PostingDate") or "").strip(), "%Y%m%d"
+                str(source_row.get(date_column) or "").strip(), "%Y%m%d"
             ).date()
         except ValueError as error:
             raise ValueError(
@@ -276,7 +286,7 @@ def aggregate_consumption_rows(
 
 
 def build_target_row(
-    aggregate: ConsumptionAggregate, written_at: datetime | None = None
+    aggregate: TargetAggregate, written_at: datetime | None = None
 ) -> dict[str, Any]:
     """Build target insert values, omitting nullable period fields intentionally."""
     return {

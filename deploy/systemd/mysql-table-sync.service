@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily SAP material movement MySQL synchronization
+Description=Daily SAP source table MySQL synchronization
 Wants=network-online.target
 After=network-online.target
 
@@ -10,7 +10,7 @@ Group=dba
 WorkingDirectory=/opt/sgb-matsync
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/etc/mysql-table-sync.env
-ExecStart=/opt/sgb-matsync/mysql-table-sync sync
+ExecStart=/opt/sgb-matsync/mysql-table-sync sync-all
 TimeoutStartSec=2h
 UMask=0027
 NoNewPrivileges=true

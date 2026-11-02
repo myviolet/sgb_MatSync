@@ -1,6 +1,16 @@
 # MySQL 单表数据同步项目骨架
 
-用于从 MySQL 8.0 源库 `SAP_RW_Material_Move` 同步数据到目标库 `record_frozen_data`。业务上将 `ID`（形如 `5003792664+2026+0012`）作为增量游标；所提供的源表 DDL 将它定义为可空 `varchar(50)`，没有声明 `PRIMARY KEY` 或 `UNIQUE` 约束，因此程序每次执行会检查 ID 非空且唯一。首次同步从头读取，此后使用目标库内部状态表 `_mysql_table_sync_state` 保存已提交的最后 ID。
+用于从 MySQL 8.0 源库同步数据到目标库 `record_frozen_data`，当前覆盖三张源表（各自独立的增量游标）：
+
+| 源表 | 命令 | 游标列 | 说明 |
+| --- | --- | --- | --- |
+| `SAP_RW_Material_Move` | `sync` | `ID`（形如 `5003792664+2026+0012` 的 varchar） | 原材料移动 |
+| `SAP_PG_Sales` | `sync-sales` | `id`（自增主键） | 生铁销量 |
+| `SAP_Productivity` | `sync-productivity` | `id`（自增主键） | 成品产量 |
+
+`sync-all` 依次执行三个档案，任一档案失败会记录错误并继续执行其余档案，最终以非零退出码结束。
+
+原材料表的 `ID` 所提供的源表 DDL 将它定义为可空 `varchar(50)`，没有声明 `PRIMARY KEY` 或 `UNIQUE` 约束，因此程序每次执行会检查 ID 非空且唯一。首次同步从头读取，此后使用目标库内部状态表 `_mysql_table_sync_state` 保存每个档案已提交的最后主键值（每个源表一行）。
 
 ## 项目结构
 
@@ -83,10 +93,47 @@ mysql+pymysql://用户名:密码@主机:3306/数据库名?charset=utf8mb4
 ```powershell
 mysql-table-sync --help
 mysql-table-sync check
-mysql-table-sync sync
+mysql-table-sync sync                # SAP_RW_Material_Move
+mysql-table-sync sync-sales          # SAP_PG_Sales
+mysql-table-sync sync-productivity   # SAP_Productivity
+mysql-table-sync sync-all            # 依次执行全部档案
 ```
 
-`check` 会分别连接两个库执行 `SELECT 1`。`sync` 首次全量读取，随后按 `ID` 增量；每批目标数据写入与游标推进处于同一事务。`SOURCE_EXCLUDED_IDS` 中的异常 ID 会在源查询阶段就被过滤掉，不会进入游标：由于 `ID` 是字符串，`OnlyKey` 这类以字母开头的值在字符序上大于所有以数字开头的业务 ID，若让它成为游标，后续 `ID > 'OnlyKey'` 将永远查不到新数据。这些 ID 同样不参与启动时的唯一性校验——源表中这类脏数据常常重复出现，而它们本身不会被同步。相同日汇总键的新数据会累加到目标记录，目标已有多个相同键时会报错停止。可在仓库根目录运行 `python -m mysql_table_sync.cli --help`，或执行 `pytest`。
+`check` 会分别连接两个库执行 `SELECT 1`。各 `sync*` 命令首次全量读取，随后按各自主键增量；每批目标数据写入与游标推进处于同一事务。`sync-all` 中每个档案独立捕获异常：一个档案失败不会中断其余档案，但最终退出码为非零。`SOURCE_EXCLUDED_IDS` 只作用于原材料表：异常 ID 会在源查询阶段就被过滤掉，不会进入游标（`OnlyKey` 这类以字母开头的值在字符序上大于所有以数字开头的业务 ID，若成为游标，后续查询将永远取不到新数据），也不参与启动时的唯一性校验。相同日汇总键的新数据会累加到目标记录，目标已有多个相同键时会报错停止。可在仓库根目录运行 `python -m mysql_table_sync.cli --help`，或执行 `pytest`。
+
+## 生铁销量与成品产量同步
+
+两张新表的档案定义与映射规则位于 `src/mysql_table_sync/sources.py`，共用与原材料表相同的批次引擎和目标写入逻辑（`stat_type=1`、同键累加、游标状态按源表分行保存）。
+
+### SAP_PG_Sales（生铁销量）
+
+- 源字段 `Ton` 为**销售量**（单位吨）。源表 DDL 中该列注释误写为「订单号」，如需修正列注释可执行：
+
+  ```sql
+  ALTER TABLE SAP_PG_Sales
+    MODIFY COLUMN `Ton` varchar(50) DEFAULT NULL COMMENT '销售量，单位吨';
+  ```
+
+- `meter_number` = `pig` + `Material` 去空格后的**后六位**，整体小写。例如 `Material=000000000000226460` 得到 `pig226460`。`Material` 空或不足 6 位视为脏数据跳过。
+- 聚合口径：按 `(Material, 过账日期)` 分组对 `Ton` 求和，**不做单位换算、不取绝对值**，保留源表符号（退货负值会原样入库）。
+- 过账日期格式为 `2026.07.03`，**严格匹配** `YYYY.MM.DD` 才入库；其余值（表头行 `\ufeffPosting date`、`Posting_Date`、`-`、空值等）视为脏数据跳过并按原因计数写日志。日期列兼容 `Posting_Date` / `Posting_Data` 两种拼写，运行时取实际存在的列。
+- 源表没有金额列，目标 `price` 固定写 `0`。
+- 不区分 `SalesType` / `Plant` / `Category`，全部行计入同一物料当日合计；不生成 `_all` 汇总行。
+
+### SAP_Productivity（成品产量）
+
+- `Product` 决定 `meter_number`，整体小写：`Iron`→`iron`（炼铁）、`Pipe`→`pipe`（管道）、`Fittings`→`fit`（管件）。大小写与首尾空格不敏感；其他取值视为脏数据跳过并计数。
+- `Ton` 为**产量**（单位吨），按 `(Product, 过账日期)` 分组求和，不换算、不取绝对值；`price` 固定写 `0`。
+- 过账日期格式为 `20260710`（`YYYYMMDD`），严格匹配才入库；同样兼容 `Posting_Date` / `Posting_Data` 列名拼写。
+
+### 与原材料表的差异
+
+| 项 | SAP_RW_Material_Move | SAP_PG_Sales / SAP_Productivity |
+| --- | --- | --- |
+| 游标 | `ID`（varchar） | `id`（自增整型，比较时转为整数） |
+| 脏数据处理 | 启动时校验 ID 唯一性，非法数量直接报错 | 跳过脏行并按原因计数（`invalid_posting_date` / `invalid_ton` / `invalid_material` / `unknown_product`），游标照常推进 |
+| 排除 ID | `SOURCE_EXCLUDED_IDS`（`OnlyKey` 等） | 无 |
+| 单位 | kg→t 等换算（焦炭保持 kg） | 均为吨，不换算 |
 
 ## 每日定时执行（Windows）
 
@@ -327,6 +374,17 @@ scp mysql-table-sync dba@SERVER:/tmp/
 sudo install -o root -g dba -m 0750 /tmp/mysql-table-sync /opt/sgb-matsync/mysql-table-sync
 sudo systemctl start mysql-table-sync-check.service
 ```
+
+**本次升级附带 unit 变更**（`ExecStart` 从 `sync` 改为 `sync-all`，新增两张源表），必须一并重装 unit 并重载：
+
+```bash
+scp deploy/systemd/mysql-table-sync.service dba@SERVER:/tmp/
+sudo install -o root -g root -m 0644 /tmp/mysql-table-sync.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start mysql-table-sync.service   # 试运行，观察三个档案的日志
+```
+
+`sync-all` 首次运行会为 `SAP_PG_Sales` 与 `SAP_Productivity` 各建一行游标状态并做全量初始化；原材料表继续沿用既有游标，只同步增量。
 
 ### 常见故障速查
 
