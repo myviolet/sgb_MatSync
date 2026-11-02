@@ -114,15 +114,6 @@ def test_sales_keeps_the_source_sign_instead_of_absorbing_it() -> None:
     assert _by_meter(result)[("pig226460", date(2026, 7, 3))].dvalue == Decimal("-57.82")
 
 
-def test_sales_supports_the_posting_data_column_spelling() -> None:
-    result = aggregate_pig_iron_sales_rows(
-        [{"id": 1, "Posting_Data": "2026.07.03", "Material": "226460", "Ton": "2.00"}],
-        date_column="Posting_Data",
-    )
-
-    assert _by_meter(result)[("pig226460", date(2026, 7, 3))].dvalue == Decimal("2.00")
-
-
 def test_productivity_rows_are_grouped_by_product_and_day() -> None:
     result = aggregate_productivity_rows(
         [

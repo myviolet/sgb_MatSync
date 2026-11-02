@@ -116,7 +116,7 @@ mysql-table-sync sync-all            # 依次执行全部档案
 
 - `meter_number` = `pig` + `Material` 去空格后的**后六位**，整体小写。例如 `Material=000000000000226460` 得到 `pig226460`。`Material` 空或不足 6 位视为脏数据跳过。
 - 聚合口径：按 `(Material, 过账日期)` 分组对 `Ton` 求和，**不做单位换算、不取绝对值**，保留源表符号（退货负值会原样入库）。
-- 过账日期格式为 `2026.07.03`，**严格匹配** `YYYY.MM.DD` 才入库；其余值（表头行 `\ufeffPosting date`、`Posting_Date`、`-`、空值等）视为脏数据跳过并按原因计数写日志。日期列兼容 `Posting_Date` / `Posting_Data` 两种拼写，运行时取实际存在的列。
+- 过账日期格式为 `2026.07.03`，**严格匹配** `YYYY.MM.DD` 才入库；其余值（表头行 `\ufeffPosting date`、`Posting_Date`、`-`、空值等）视为脏数据跳过并按原因计数写日志。日期列固定为 `Posting_Date`。
 - 源表没有金额列，目标 `price` 固定写 `0`。
 - 不区分 `SalesType` / `Plant` / `Category`，全部行计入同一物料当日合计；不生成 `_all` 汇总行。
 
@@ -124,7 +124,7 @@ mysql-table-sync sync-all            # 依次执行全部档案
 
 - `Product` 决定 `meter_number`，整体小写：`Iron`→`iron`（炼铁）、`Pipe`→`pipe`（管道）、`Fittings`→`fit`（管件）。大小写与首尾空格不敏感；其他取值视为脏数据跳过并计数。
 - `Ton` 为**产量**（单位吨），按 `(Product, 过账日期)` 分组求和，不换算、不取绝对值；`price` 固定写 `0`。
-- 过账日期格式为 `20260710`（`YYYYMMDD`），严格匹配才入库；同样兼容 `Posting_Date` / `Posting_Data` 列名拼写。
+- 过账日期格式为 `20260710`（`YYYYMMDD`），严格匹配才入库；日期列固定为 `Posting_Date`。
 
 ### 与原材料表的差异
 

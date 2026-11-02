@@ -207,7 +207,7 @@ PIG_IRON_SALES_PROFILE = SyncProfile(
     source_table=PIG_IRON_SALES_TABLE,
     source_primary_key="id",
     required_columns=frozenset({"Material", "Ton"}),
-    date_columns=("Posting_Date", "Posting_Data"),
+    date_columns=("Posting_Date",),
     aggregate=aggregate_pig_iron_sales_rows,
     numeric_primary_key=True,
 )
@@ -217,7 +217,7 @@ PRODUCTIVITY_PROFILE = SyncProfile(
     source_table=PRODUCTIVITY_TABLE,
     source_primary_key="id",
     required_columns=frozenset({"Product", "Ton"}),
-    date_columns=("Posting_Date", "Posting_Data"),
+    date_columns=("Posting_Date",),
     aggregate=aggregate_productivity_rows,
     numeric_primary_key=True,
 )
