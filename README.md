@@ -118,9 +118,10 @@ mysql-table-sync sync-all            # 依次执行全部档案
 
 - `meter_number` = `pig` + `Material` 去空格后的**后六位**，整体小写。例如 `Material=000000000000226460` 得到 `pig226460`。`Material` 空或不足 6 位视为脏数据跳过。
 - 聚合口径：按 `(Material, 过账日期)` 分组对 `Ton` 求和，**不做单位换算、不取绝对值**，保留源表符号（退货负值会原样入库）。
+- 每日另有 `pig_all` 汇总行，等于当日所有 `pig<尾号>` 明细之和，口径与物料移动表的 `<短码>_all` 一致；`pig_all` 不参与任何明细计算，只从当日明细派生。
 - 过账日期格式为 `2026.07.03`，**严格匹配** `YYYY.MM.DD` 才入库；其余值（表头行 `\ufeffPosting date`、`Posting_Date`、`-`、空值等）视为脏数据跳过并按原因计数写日志。日期列固定为 `Posting_Date`。
 - 源表没有金额列，目标 `price` 固定写 `0`。
-- 不区分 `SalesType` / `Plant` / `Category`，全部行计入同一物料当日合计；不生成 `_all` 汇总行。
+- 不区分 `SalesType` / `Plant` / `Category`，全部行计入同一物料当日合计。
 
 ### SAP_Productivity（成品产量）
 

@@ -57,12 +57,19 @@ def test_sales_rows_are_grouped_by_material_tail_and_day() -> None:
         ("pig226460", date(2026, 7, 3)),
         ("pig226460", date(2026, 7, 4)),
         ("pig226461", date(2026, 7, 3)),
+        ("pig_all", date(2026, 7, 3)),
+        ("pig_all", date(2026, 7, 4)),
     }
     assert by_meter[("pig226460", date(2026, 7, 3))].dvalue == Decimal("99.82")
     assert by_meter[("pig226460", date(2026, 7, 3))].price == Decimal("0")
     assert by_meter[("pig226460", date(2026, 7, 3))].source_rows == 2
     assert by_meter[("pig226460", date(2026, 7, 4))].dvalue == Decimal("59.77")
     assert by_meter[("pig226461", date(2026, 7, 3))].dvalue == Decimal("1234.50")
+
+    # pig_all per day equals the sum of that day's material rows.
+    assert by_meter[("pig_all", date(2026, 7, 3))].dvalue == Decimal("1334.32")
+    assert by_meter[("pig_all", date(2026, 7, 4))].dvalue == Decimal("59.77")
+    assert by_meter[("pig_all", date(2026, 7, 3))].source_rows == 3
 
 
 def test_sales_dirty_header_and_placeholder_dates_are_skipped() -> None:
@@ -237,14 +244,14 @@ def test_sales_sync_end_to_end_with_numeric_cursor() -> None:
 
         assert first_run.rows_read == 6
         # rows_written counts per-batch writes, so a key split across batches counts twice.
-        assert first_run.rows_written == 4
+        assert first_run.rows_written == 8
         second_run = service.run()
         assert second_run.rows_read == 0
 
         _insert_sales_row(source_engine, "2026.07.04", "000000000000226460", "1.23")
         incremental_run = service.run()
         assert incremental_run.rows_read == 1
-        assert incremental_run.rows_written == 1
+        assert incremental_run.rows_written == 2
 
         with target_engine.connect() as connection:
             rows = connection.execute(
@@ -260,14 +267,18 @@ def test_sales_sync_end_to_end_with_numeric_cursor() -> None:
                 )
             ).scalar_one()
 
+        # SQLite stores NUMERIC as float, so accumulated values need approximate comparison;
+        # MySQL keeps DECIMAL(20,4) exact.
         rows_by_key = {
-            (meter, str(day)[:10]): (Decimal(str(dvalue)), Decimal(str(price)), stat_type)
+            (meter, str(day)[:10]): (float(dvalue), float(price), stat_type)
             for meter, day, dvalue, price, stat_type in rows
         }
-        assert rows_by_key[("pig226460", "2026-07-03")] == (Decimal("99.82"), Decimal("0"), 1)
-        assert rows_by_key[("pig226460", "2026-07-04")] == (Decimal("61.00"), Decimal("0"), 1)
-        assert rows_by_key[("pig226461", "2026-07-04")] == (Decimal("10"), Decimal("0"), 1)
-        assert len(rows) == 3
+        assert rows_by_key[("pig226460", "2026-07-03")] == (pytest.approx(99.82), 0.0, 1)
+        assert rows_by_key[("pig226460", "2026-07-04")] == (pytest.approx(61.00), 0.0, 1)
+        assert rows_by_key[("pig226461", "2026-07-04")] == (pytest.approx(10.0), 0.0, 1)
+        assert rows_by_key[("pig_all", "2026-07-03")] == (pytest.approx(99.82), 0.0, 1)
+        assert rows_by_key[("pig_all", "2026-07-04")] == (pytest.approx(71.00), 0.0, 1)
+        assert len(rows) == 5
         assert last_id == "7"
     finally:
         source_engine.dispose()
@@ -335,7 +346,11 @@ def test_profiles_keep_independent_state_rows() -> None:
             ).all()
 
         assert state_rows == ["SAP_PG_Sales->record_frozen_data", "SAP_Productivity->record_frozen_data"]
-        assert rows == [("pig226460", Decimal("1.00")), ("pipe", Decimal("2.00"))]
+        assert rows == [
+            ("pig226460", Decimal("1.00")),
+            ("pig_all", Decimal("1.00")),
+            ("pipe", Decimal("2.00")),
+        ]
     finally:
         source_engine.dispose()
         target_engine.dispose()

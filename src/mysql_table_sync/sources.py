@@ -17,6 +17,8 @@ from mysql_table_sync.mapping import ConsumptionAggregate, aggregate_consumption
 # 不并入 MATERIAL_TYPE_CODES，避免让物料移动表误接受 "生铁" 这一 MaterialType。
 PIG_IRON_TYPE_CODE = "pig"
 PIG_IRON_MATERIAL_TAIL_LENGTH = 6
+# 所有生铁品种的每日销售总量，口径与物料移动表的 <短码>_all 一致。
+PIG_IRON_ALL_METER_NUMBER = f"{PIG_IRON_TYPE_CODE}_all"
 PIG_IRON_SALES_TABLE = "SAP_PG_Sales"
 PRODUCTIVITY_TABLE = "SAP_Productivity"
 
@@ -111,6 +113,7 @@ def aggregate_pig_iron_sales_rows(
 ) -> AggregationResult:
     """Group pig iron sales by Material (last 6 digits) and day, summing Ton.
 
+    An extra ``pig_all`` row per day holds the total across every material.
     Sales and productivity sources carry no amount column, so the target price
     is always zero. Both sources are append-only, so quantities are accumulated
     with their source sign untouched.
@@ -138,7 +141,19 @@ def aggregate_pig_iron_sales_rows(
         totals.dvalue += ton
         totals.source_rows += 1
 
-    return AggregationResult(_build_daily_aggregates(grouped), dict(skipped))
+    # pig_all rolls every material tail up per day. It is derived from the
+    # material totals instead of the raw rows so both always agree exactly.
+    all_totals: dict[tuple[str, date], _DailyTotals] = {}
+    for (_meter_number, posting_date), totals in grouped.items():
+        day_totals = all_totals.setdefault(
+            (PIG_IRON_ALL_METER_NUMBER, posting_date), _DailyTotals()
+        )
+        day_totals.dvalue += totals.dvalue
+        day_totals.source_rows += totals.source_rows
+
+    aggregates = _build_daily_aggregates(grouped)
+    aggregates.extend(_build_daily_aggregates(all_totals))
+    return AggregationResult(aggregates, dict(skipped))
 
 
 def aggregate_productivity_rows(
