@@ -140,11 +140,18 @@ def test_productivity_rows_are_grouped_by_product_and_day() -> None:
         ("iron", date(2026, 7, 10)),
         ("pipe", date(2026, 7, 11)),
         ("fit", date(2026, 7, 10)),
+        ("prod_all", date(2026, 7, 10)),
+        ("prod_all", date(2026, 7, 11)),
     }
     assert by_meter[("iron", date(2026, 7, 10))].dvalue == Decimal("150.5")
     assert by_meter[("iron", date(2026, 7, 10))].price == Decimal("0")
     assert by_meter[("pipe", date(2026, 7, 11))].dvalue == Decimal("20")
     assert by_meter[("fit", date(2026, 7, 10))].dvalue == Decimal("6.25")
+
+    # prod_all per day equals the sum of that day's product rows.
+    assert by_meter[("prod_all", date(2026, 7, 10))].dvalue == Decimal("156.75")
+    assert by_meter[("prod_all", date(2026, 7, 11))].dvalue == Decimal("20")
+    assert by_meter[("prod_all", date(2026, 7, 10))].source_rows == 4
 
 
 def test_productivity_dirty_rows_are_skipped() -> None:
@@ -350,6 +357,7 @@ def test_profiles_keep_independent_state_rows() -> None:
             ("pig226460", Decimal("1.00")),
             ("pig_all", Decimal("1.00")),
             ("pipe", Decimal("2.00")),
+            ("prod_all", Decimal("2.00")),
         ]
     finally:
         source_engine.dispose()

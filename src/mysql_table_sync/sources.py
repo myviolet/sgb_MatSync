@@ -25,6 +25,8 @@ PRODUCTIVITY_TABLE = "SAP_Productivity"
 # SAP_Productivity 的 Product 维度 -> meter_number 短码，整体小写。
 # Iron=炼铁, Pipe=管道, Fittings=管件。
 PRODUCTIVITY_PRODUCT_CODES = {"iron": "iron", "pipe": "pipe", "fittings": "fit"}
+# 所有成品品种的每日总产量，口径与生铁销量的 pig_all 一致。
+PRODUCTIVITY_ALL_METER_NUMBER = "prod_all"
 
 _SALES_DATE_PATTERN = re.compile(r"\d{4}\.\d{2}\.\d{2}")
 _SALES_DATE_FORMAT = "%Y.%m.%d"
@@ -108,6 +110,22 @@ def _build_daily_aggregates(
     ]
 
 
+def _roll_up_daily_totals(
+    grouped: dict[tuple[str, date], _DailyTotals], meter_number: str
+) -> dict[tuple[str, date], _DailyTotals]:
+    """Sum every meter number of one day into a single ``<root>_all`` row.
+
+    Derived from the per-material (or per-product) totals rather than from the
+    raw rows, so the all-row and its details always agree exactly.
+    """
+    all_totals: dict[tuple[str, date], _DailyTotals] = {}
+    for (_meter_number, posting_date), totals in grouped.items():
+        day_totals = all_totals.setdefault((meter_number, posting_date), _DailyTotals())
+        day_totals.dvalue += totals.dvalue
+        day_totals.source_rows += totals.source_rows
+    return all_totals
+
+
 def aggregate_pig_iron_sales_rows(
     source_rows: Iterable[Mapping[str, Any]], *, date_column: str
 ) -> AggregationResult:
@@ -141,25 +159,22 @@ def aggregate_pig_iron_sales_rows(
         totals.dvalue += ton
         totals.source_rows += 1
 
-    # pig_all rolls every material tail up per day. It is derived from the
-    # material totals instead of the raw rows so both always agree exactly.
-    all_totals: dict[tuple[str, date], _DailyTotals] = {}
-    for (_meter_number, posting_date), totals in grouped.items():
-        day_totals = all_totals.setdefault(
-            (PIG_IRON_ALL_METER_NUMBER, posting_date), _DailyTotals()
-        )
-        day_totals.dvalue += totals.dvalue
-        day_totals.source_rows += totals.source_rows
-
     aggregates = _build_daily_aggregates(grouped)
-    aggregates.extend(_build_daily_aggregates(all_totals))
+    aggregates.extend(
+        _build_daily_aggregates(
+            _roll_up_daily_totals(grouped, PIG_IRON_ALL_METER_NUMBER)
+        )
+    )
     return AggregationResult(aggregates, dict(skipped))
 
 
 def aggregate_productivity_rows(
     source_rows: Iterable[Mapping[str, Any]], *, date_column: str
 ) -> AggregationResult:
-    """Group finished-product output by Product and day, summing Ton."""
+    """Group finished-product output by Product and day, summing Ton.
+
+    An extra ``prod_all`` row per day holds the total across every product.
+    """
     grouped: dict[tuple[str, date], _DailyTotals] = {}
     skipped: Counter[str] = Counter()
 
@@ -183,7 +198,13 @@ def aggregate_productivity_rows(
         totals.dvalue += ton
         totals.source_rows += 1
 
-    return AggregationResult(_build_daily_aggregates(grouped), dict(skipped))
+    aggregates = _build_daily_aggregates(grouped)
+    aggregates.extend(
+        _build_daily_aggregates(
+            _roll_up_daily_totals(grouped, PRODUCTIVITY_ALL_METER_NUMBER)
+        )
+    )
+    return AggregationResult(aggregates, dict(skipped))
 
 
 def _make_consumption_aggregator(

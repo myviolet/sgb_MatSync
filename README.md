@@ -126,6 +126,7 @@ mysql-table-sync sync-all            # 依次执行全部档案
 ### SAP_Productivity（成品产量）
 
 - `Product` 决定 `meter_number`，整体小写：`Iron`→`iron`（炼铁）、`Pipe`→`pipe`（管道）、`Fittings`→`fit`（管件）。大小写与首尾空格不敏感；其他取值视为脏数据跳过并计数。
+- 每日另有 `prod_all` 汇总行，等于当日 `iron` + `pipe` + `fit` 之和（成品总产量），与 `pig_all` 同构；同样只从明细派生，不参与明细计算。
 - `Ton` 为**产量**（单位吨），按 `(Product, 过账日期)` 分组求和，不换算、不取绝对值；`price` 固定写 `0`。
 - 过账日期格式为 `20260710`（`YYYYMMDD`），严格匹配才入库；日期列固定为 `Posting_Date`。
 
