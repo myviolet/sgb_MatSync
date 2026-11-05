@@ -55,16 +55,16 @@ def test_moisture_movement_type_uses_separate_meter_number_suffix() -> None:
         ("兰炭", "291", ("", "_w")), ("兰炭", "292", ("",)),
         ("焦炭", "101", ("_p",)), ("焦炭", "102", ("_p", "_mc")),
         ("焦炭", "291", ("", "_w")), ("焦炭", "292", ("",)),
-        ("硅铁", "105", ("_p",)), ("硅铁", "201", ("", "_w")),
-        ("硅铁", "202", ("",)), ("硅铁", "291", ("", "_w")), ("硅铁", "292", ("",)),
+        ("硅铁", "105", ("_p",)), ("硅铁", "201", ("",)),
+        ("硅铁", "202", ("",)), ("硅铁", "291", ("",)), ("硅铁", "292", ("",)),
         ("石灰石", "101", ("_p",)), ("石灰石", "102", ("_p", "_mc")),
         ("石灰石", "291", ("", "_w")), ("石灰石", "292", ("",)),
         ("白云石", "101", ("_p",)), ("白云石", "102", ("_p", "_mc")),
         ("白云石", "291", ("", "_w")), ("白云石", "292", ("",)),
-        ("柴油", "101", ("_p",)), ("柴油", "201", ("", "_w")),
+        ("柴油", "101", ("_p",)), ("柴油", "201", ("",)),
         ("废钢", "101", ("_p",)), ("废钢", "102", ("_p",)),
-        ("废钢", "105", ("_p",)), ("废钢", "201", ("", "_w")),
-        ("废钢", "202", ("",)), ("废钢", "291", ("", "_w")), ("废钢", "292", ("",)),
+        ("废钢", "105", ("_p",)), ("废钢", "201", ("",)),
+        ("废钢", "202", ("",)), ("废钢", "291", ("",)), ("废钢", "292", ("",)),
     ],
 )
 def test_material_type_movement_type_matrix(
@@ -203,10 +203,7 @@ def test_daily_aggregation_separates_different_material_numbers() -> None:
 
     aggregates = aggregate_consumption_rows(rows)
 
-    assert {item.meter_number for item in aggregates} == {
-        "sfemat-a", "sfemat-b", "sfe_all",
-        "sfemat-a_w", "sfemat-b_w", "sfe_all_w",
-    }
+    assert {item.meter_number for item in aggregates} == {"sfemat-a", "sfemat-b", "sfe_all"}
     assert {item.dvalue for item in aggregates} == {
         Decimal("1.000"), Decimal("2.000"), Decimal("3.000")
     }
@@ -512,9 +509,7 @@ def test_usage_row_with_cost_object_gets_an_extra_plant_specific_meter() -> None
 
     assert {row["meter_number"] for row in mapped_rows} == {
         "sfe20056684",
-        "sfe20056684_w",
         "sfe20056684plant-1",
-        "sfe20056684plant-1_w",
     }
 
 
@@ -529,7 +524,7 @@ def test_empty_cost_object_does_not_create_an_extra_meter() -> None:
         }
     )
 
-    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684", "sfe20056684_w"}
+    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684"}
 
 
 def test_diesel_usage_with_cost_centre_gets_an_extra_meter() -> None:
@@ -545,9 +540,7 @@ def test_diesel_usage_with_cost_centre_gets_an_extra_meter() -> None:
 
     assert {row["meter_number"] for row in mapped_rows} == {
         "die20067733",
-        "die20067733_w",
         "die20067733cc-steel",
-        "die20067733cc-steel_w",
     }
 
 
@@ -565,11 +558,8 @@ def test_diesel_row_with_both_cost_fields_writes_both_extra_rows() -> None:
 
     assert {row["meter_number"] for row in mapped_rows} == {
         "die20067733",
-        "die20067733_w",
         "die20067733plant-1",
-        "die20067733plant-1_w",
         "die20067733cc-steel",
-        "die20067733cc-steel_w",
     }
 
 
@@ -584,7 +574,7 @@ def test_cost_centre_is_only_used_for_diesel() -> None:
         }
     )
 
-    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684", "sfe20056684_w"}
+    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684"}
 
 
 def test_diesel_purchase_is_not_split_by_cost_centre() -> None:
@@ -634,14 +624,9 @@ def test_cost_object_usage_is_stored_separately_without_double_counting_the_all_
 
     by_meter = {item.meter_number: item for item in aggregates}
 
-    # Both bases get the plant-specific row, and neither copy feeds the _all totals.
-    assert set(by_meter) == {
-        "sfemat001", "sfemat001_w",
-        "sfemat001plant-1", "sfemat001plant-1_w",
-        "sfe_all", "sfe_all_w",
-    }
+    # 硅铁 has no wet basis: a single usage row per meter, split by plant but not by basis.
+    assert set(by_meter) == {"sfemat001", "sfemat001plant-1", "sfe_all"}
     assert by_meter["sfemat001plant-1"].dvalue == Decimal("1.000")
-    assert by_meter["sfemat001plant-1_w"].dvalue == Decimal("1.000")
     assert by_meter["sfemat001plant-1"].price == Decimal("10")
     assert by_meter["sfe_all"].dvalue == Decimal("1.000")
 

@@ -71,14 +71,14 @@ def test_incremental_cursor_does_not_stall_on_excluded_id() -> None:
         first_run = service.run()
 
         assert first_run.rows_read == 1
-        # 201 writes the dry basis, the wet basis, and one summary row for each.
-        assert first_run.rows_written == 4
+        # 硅铁 201 writes one detail row and one summary row (no wet basis).
+        assert first_run.rows_written == 2
 
         _insert_source_row(source_engine, "0001+2026+0002", "2", "20.00", "201")
         second_run = service.run()
 
         assert second_run.rows_read == 1
-        assert second_run.rows_written == 4
+        assert second_run.rows_written == 2
 
         with target_engine.connect() as connection:
             last_id = connection.execute(
@@ -111,7 +111,7 @@ def test_duplicate_excluded_ids_do_not_block_sync() -> None:
         report = service.run()
 
         assert report.rows_read == 1
-        assert report.rows_written == 4
+        assert report.rows_written == 2
 
         with target_engine.connect() as connection:
             last_id = connection.execute(
@@ -168,8 +168,8 @@ def test_full_then_incremental_sync_uses_source_id_cursor() -> None:
         second_run = service.run()
 
         assert first_run.rows_read == 3
-        # Two batches, four aggregate keys each; the summary keys are written twice.
-        assert first_run.rows_written == 8
+        # Two batches, two aggregate keys each; the summary key is written twice.
+        assert first_run.rows_written == 4
         assert second_run.rows_read == 0
         assert second_run.rows_written == 0
 
@@ -177,7 +177,7 @@ def test_full_then_incremental_sync_uses_source_id_cursor() -> None:
         incremental_run = service.run()
 
         assert incremental_run.rows_read == 1
-        assert incremental_run.rows_written == 4
+        assert incremental_run.rows_written == 2
         with target_engine.connect() as connection:
             rows = connection.execute(
                 text(
@@ -187,9 +187,9 @@ def test_full_then_incremental_sync_uses_source_id_cursor() -> None:
                 )
             ).mappings().all()
 
-        assert len(rows) == 4
+        assert len(rows) == 2
         rows_by_meter = {row["meter_number"]: row for row in rows}
-        for meter_number in ("sfe20056684", "sfe20056684_w", "sfe_all", "sfe_all_w"):
+        for meter_number in ("sfe20056684", "sfe_all"):
             assert float(rows_by_meter[meter_number]["dvalue"]) == 0.01
             assert float(rows_by_meter[meter_number]["price"]) == 100.0
             assert rows_by_meter[meter_number]["stat_type"] == 1

@@ -92,8 +92,13 @@ ALL_MATERIALS_SUFFIX = "_all"
 # 202/292 carry that input's moisture content and are posted positive. The plain usage category
 # adds all four movements together, so it already nets out the moisture and is the dry basis.
 # The wet basis is the same posting without the moisture lines, i.e. 201/291 only.
+# Only materials with measurable moisture split into the two bases (the allow list keeps
+# future material types single-basis by default); 硅铁/废钢/柴油 have no such distinction.
 WET_USAGE_CATEGORY = "wet_usage"
 WET_USAGE_MOVEMENT_TYPES = frozenset({"201", "291"})
+WET_USAGE_MATERIAL_TYPES = frozenset(
+    {"煤炭", "兰炭", "焦炭", "石灰石", "白云石", "生物质炭"}
+)
 # Source reverses a posting with an equal opposite entry, so every category total is netted by sign
 # first. Moisture is stored as a positive value afterwards; usage keeps the signed net.
 ABSOLUTE_VALUE_CATEGORIES = frozenset({"moisture"})
@@ -212,7 +217,11 @@ def map_consumption_rows(
         }
         for category in categories
     ]
-    has_wet_basis = "usage" in categories and movement_type in WET_USAGE_MOVEMENT_TYPES
+    has_wet_basis = (
+        "usage" in categories
+        and movement_type in WET_USAGE_MOVEMENT_TYPES
+        and material_type in WET_USAGE_MATERIAL_TYPES
+    )
     if has_wet_basis:
         # Same posting, moisture lines excluded: the wet basis sits beside the dry basis row.
         mapped_rows.append(

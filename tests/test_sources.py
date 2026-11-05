@@ -415,3 +415,16 @@ def test_cli_expands_commands_into_profiles() -> None:
         "productivity",
     ]
     assert material_move_profile(settings).source_table == "SAP_RW_Material_Move"
+
+
+def test_material_move_profile_switches_to_numeric_cursor_for_sync_id() -> None:
+    """SOURCE_PRIMARY_KEY=sync_id must enable the numeric cursor and its regression guard."""
+    legacy = material_move_profile(Settings("sqlite://", "sqlite://"))
+    assert legacy.source_primary_key == "ID"
+    assert legacy.numeric_primary_key is False
+
+    switched = material_move_profile(
+        Settings("sqlite://", "sqlite://", source_primary_key="sync_id")
+    )
+    assert switched.source_primary_key == "sync_id"
+    assert switched.numeric_primary_key is True

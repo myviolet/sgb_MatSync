@@ -236,6 +236,10 @@ def material_move_profile(settings: Settings) -> SyncProfile:
         date_columns=("PostingDate",),
         aggregate=_make_consumption_aggregator(settings.source_excluded_ids),
         excluded_ids=settings.source_excluded_ids,
+        # SOURCE_PRIMARY_KEY=sync_id switches to the customer-side auto-increment column:
+        # numeric cursor comparisons plus the cursor-regression guard. The legacy varchar
+        # ID keeps the old string-cursor behaviour, so this stays an env-only rollback.
+        numeric_primary_key=settings.source_primary_key.casefold() != "id",
     )
 
 
