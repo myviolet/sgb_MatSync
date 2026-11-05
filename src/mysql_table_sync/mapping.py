@@ -1,5 +1,6 @@
 """Business rules for selecting and aggregating source consumption rows."""
 
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -25,6 +26,7 @@ MATERIAL_TYPE_CODES = {
     "废钢": "scr",
     "兰炭": "sem",
     "石灰石": "lim",
+    "生物质炭": "bch",
 }
 MATERIAL_MOVEMENT_CATEGORIES = {
     "煤炭": {
@@ -77,9 +79,21 @@ MATERIAL_MOVEMENT_CATEGORIES = {
         "291": ("usage",),
         "292": ("usage",),
     },
+    "生物质炭": {
+        "101": ("purchase",),
+        "102": ("purchase", "moisture"),
+        "291": ("usage",),
+        "292": ("usage",),
+    },
 }
-CATEGORY_SUFFIXES = {"usage": "", "purchase": "_p", "moisture": "_mc"}
+CATEGORY_SUFFIXES = {"usage": "", "wet_usage": "_w", "purchase": "_p", "moisture": "_mc"}
 ALL_MATERIALS_SUFFIX = "_all"
+# 201/291 are wet-basis consumption (the gross input, moisture included) and are posted negative;
+# 202/292 carry that input's moisture content and are posted positive. The plain usage category
+# adds all four movements together, so it already nets out the moisture and is the dry basis.
+# The wet basis is the same posting without the moisture lines, i.e. 201/291 only.
+WET_USAGE_CATEGORY = "wet_usage"
+WET_USAGE_MOVEMENT_TYPES = frozenset({"201", "291"})
 # Source reverses a posting with an equal opposite entry, so every category total is netted by sign
 # first. Moisture is stored as a positive value afterwards; usage keeps the signed net.
 ABSOLUTE_VALUE_CATEGORIES = frozenset({"moisture"})
@@ -98,6 +112,7 @@ MATERIAL_SOURCE_UNITS = {
     "废钢": frozenset({"kg"}),
     "兰炭": frozenset({"kg", "t", "to"}),
     "石灰石": frozenset({"kg"}),
+    "生物质炭": frozenset({"kg"}),
 }
 # Target dvalue unit per material. 焦炭 stays in kg, everything else is stored in tonnes.
 MATERIAL_TARGET_UNITS = {
@@ -109,6 +124,7 @@ MATERIAL_TARGET_UNITS = {
     "废钢": "t",
     "兰炭": "t",
     "石灰石": "t",
+    "生物质炭": "t",
 }
 
 
@@ -196,6 +212,17 @@ def map_consumption_rows(
         }
         for category in categories
     ]
+    has_wet_basis = "usage" in categories and movement_type in WET_USAGE_MOVEMENT_TYPES
+    if has_wet_basis:
+        # Same posting, moisture lines excluded: the wet basis sits beside the dry basis row.
+        mapped_rows.append(
+            {
+                **source_row,
+                "category": WET_USAGE_CATEGORY,
+                "meter_number": f"{base_meter_number}{CATEGORY_SUFFIXES[WET_USAGE_CATEGORY]}",
+                "contributes_to_summary": True,
+            }
+        )
     if "usage" in categories:
         for field, allowed_material_types in COST_OBJECT_SOURCE_FIELDS.items():
             cost_object = str(source_row.get(field) or "").strip()
@@ -203,14 +230,27 @@ def map_consumption_rows(
                 continue
             if allowed_material_types is not None and material_type not in allowed_material_types:
                 continue
+            dry_meter_number = f"{base_meter_number}{cost_object}".lower()
             mapped_rows.append(
                 {
                     **source_row,
                     "category": "usage",
-                    "meter_number": f"{base_meter_number}{cost_object}".lower(),
+                    "meter_number": dry_meter_number,
                     "contributes_to_summary": False,
                 }
             )
+            if has_wet_basis:
+                # The wet basis mirrors the split; like the dry copy it stays out of _all totals.
+                mapped_rows.append(
+                    {
+                        **source_row,
+                        "category": WET_USAGE_CATEGORY,
+                        "meter_number": (
+                            f"{dry_meter_number}{CATEGORY_SUFFIXES[WET_USAGE_CATEGORY]}"
+                        ),
+                        "contributes_to_summary": False,
+                    }
+                )
     return mapped_rows
 
 
@@ -222,17 +262,55 @@ def map_consumption_row(
     return mapped_rows[0] if mapped_rows else None
 
 
+def _skip_reason(source_row: Mapping[str, Any], excluded_ids: tuple[str, ...]) -> str | None:
+    """Say why a row maps to nothing, so silent drops become visible in the log.
+
+    Returns None for rows that are excluded on purpose (``OnlyKey`` and friends),
+    which are not dirty data and must not be counted.
+
+    The conditions here mirror the early returns of :func:`map_consumption_rows`;
+    keep the two in step.
+    """
+    if str(source_row.get("ID") or "").strip() in excluded_ids:
+        return None
+    material_type = str(source_row.get("MaterialType") or "").strip()
+    if MATERIAL_TYPE_CODES.get(material_type) is None:
+        return "unknown_material_type"
+    if not str(source_row.get("Material") or "").strip():
+        return "missing_material"
+    movement_type = str(source_row.get("MovementType") or "").strip()
+    if not MATERIAL_MOVEMENT_CATEGORIES.get(material_type, {}).get(movement_type):
+        return "unmapped_movement_type"
+    return None
+
+
 def aggregate_consumption_rows(
     source_rows: Iterable[Mapping[str, Any]],
     excluded_ids: tuple[str, ...] = ("OnlyKey",),
     date_column: str = "PostingDate",
 ) -> list[ConsumptionAggregate]:
     """Filter rows and combine quantity/CNY by mapped material number and day."""
+    aggregates, _skipped = aggregate_consumption_rows_with_skip_counts(
+        source_rows, excluded_ids=excluded_ids, date_column=date_column
+    )
+    return aggregates
+
+
+def aggregate_consumption_rows_with_skip_counts(
+    source_rows: Iterable[Mapping[str, Any]],
+    excluded_ids: tuple[str, ...] = ("OnlyKey",),
+    date_column: str = "PostingDate",
+) -> tuple[list[ConsumptionAggregate], dict[str, int]]:
+    """Same aggregation, plus a per-reason count of rows that mapped to nothing."""
     grouped: dict[tuple[str, date], tuple[str, _DailyTotals]] = {}
+    skipped: Counter[str] = Counter()
 
     for source_row in source_rows:
         mapped_rows = map_consumption_rows(source_row, excluded_ids)
         if not mapped_rows:
+            reason = _skip_reason(source_row, excluded_ids)
+            if reason is not None:
+                skipped[reason] += 1
             continue
 
         material_type = str(source_row["MaterialType"]).strip()
@@ -272,7 +350,7 @@ def aggregate_consumption_rows(
                 aggregate.price += amount
                 aggregate.source_rows += 1
 
-    return [
+    aggregates = [
         ConsumptionAggregate(
             material_type=material_type,
             meter_number=meter_number,
@@ -283,6 +361,7 @@ def aggregate_consumption_rows(
         )
         for (meter_number, posting_date), (material_type, values) in grouped.items()
     ]
+    return aggregates, dict(skipped)
 
 
 def build_target_row(

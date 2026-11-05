@@ -11,7 +11,10 @@ import re
 from typing import Any
 
 from mysql_table_sync.config import Settings
-from mysql_table_sync.mapping import ConsumptionAggregate, aggregate_consumption_rows
+from mysql_table_sync.mapping import (
+    ConsumptionAggregate,
+    aggregate_consumption_rows_with_skip_counts,
+)
 
 # 生铁销量表没有 MaterialType 列，其类型短码独立于 MATERIAL_TYPE_CODES 定义。
 # 不并入 MATERIAL_TYPE_CODES，避免让物料移动表误接受 "生铁" 这一 MaterialType。
@@ -213,12 +216,10 @@ def _make_consumption_aggregator(
     def aggregate(
         source_rows: Iterable[Mapping[str, Any]], *, date_column: str
     ) -> AggregationResult:
-        return AggregationResult(
-            aggregates=aggregate_consumption_rows(
-                source_rows, excluded_ids=excluded_ids, date_column=date_column
-            ),
-            skipped={},
+        aggregates, skipped = aggregate_consumption_rows_with_skip_counts(
+            source_rows, excluded_ids=excluded_ids, date_column=date_column
         )
+        return AggregationResult(aggregates=aggregates, skipped=skipped)
 
     return aggregate
 

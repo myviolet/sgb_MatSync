@@ -71,13 +71,14 @@ def test_incremental_cursor_does_not_stall_on_excluded_id() -> None:
         first_run = service.run()
 
         assert first_run.rows_read == 1
-        assert first_run.rows_written == 2
+        # 201 writes the dry basis, the wet basis, and one summary row for each.
+        assert first_run.rows_written == 4
 
         _insert_source_row(source_engine, "0001+2026+0002", "2", "20.00", "201")
         second_run = service.run()
 
         assert second_run.rows_read == 1
-        assert second_run.rows_written == 2
+        assert second_run.rows_written == 4
 
         with target_engine.connect() as connection:
             last_id = connection.execute(
@@ -110,7 +111,7 @@ def test_duplicate_excluded_ids_do_not_block_sync() -> None:
         report = service.run()
 
         assert report.rows_read == 1
-        assert report.rows_written == 2
+        assert report.rows_written == 4
 
         with target_engine.connect() as connection:
             last_id = connection.execute(
@@ -167,7 +168,8 @@ def test_full_then_incremental_sync_uses_source_id_cursor() -> None:
         second_run = service.run()
 
         assert first_run.rows_read == 3
-        assert first_run.rows_written == 4
+        # Two batches, four aggregate keys each; the summary keys are written twice.
+        assert first_run.rows_written == 8
         assert second_run.rows_read == 0
         assert second_run.rows_written == 0
 
@@ -175,7 +177,7 @@ def test_full_then_incremental_sync_uses_source_id_cursor() -> None:
         incremental_run = service.run()
 
         assert incremental_run.rows_read == 1
-        assert incremental_run.rows_written == 2
+        assert incremental_run.rows_written == 4
         with target_engine.connect() as connection:
             rows = connection.execute(
                 text(
@@ -185,9 +187,9 @@ def test_full_then_incremental_sync_uses_source_id_cursor() -> None:
                 )
             ).mappings().all()
 
-        assert len(rows) == 2
+        assert len(rows) == 4
         rows_by_meter = {row["meter_number"]: row for row in rows}
-        for meter_number in ("sfe20056684", "sfe_all"):
+        for meter_number in ("sfe20056684", "sfe20056684_w", "sfe_all", "sfe_all_w"):
             assert float(rows_by_meter[meter_number]["dvalue"]) == 0.01
             assert float(rows_by_meter[meter_number]["price"]) == 100.0
             assert rows_by_meter[meter_number]["stat_type"] == 1
@@ -222,9 +224,11 @@ def test_sync_writes_moisture_and_usage_to_separate_meter_rows() -> None:
             ("coa20056684", 1),
             ("coa20056684_mc", 0.5),
             ("coa20056684_p", 0.5),
+            ("coa20056684_w", 1),
             ("coa_all", 1),
             ("coa_all_mc", 0.5),
             ("coa_all_p", 0.5),
+            ("coa_all_w", 1),
         ]
     finally:
         source_engine.dispose()

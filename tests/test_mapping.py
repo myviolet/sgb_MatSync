@@ -6,6 +6,7 @@ from mysql_table_sync.mapping import (
     MATERIAL_SOURCE_UNITS,
     MATERIAL_TYPE_CODES,
     aggregate_consumption_rows,
+    aggregate_consumption_rows_with_skip_counts,
     build_target_row,
     map_consumption_row,
     map_consumption_rows,
@@ -49,21 +50,21 @@ def test_moisture_movement_type_uses_separate_meter_number_suffix() -> None:
     ("material_type", "movement_type", "expected_suffixes"),
     [
         ("煤炭", "101", ("_p",)), ("煤炭", "102", ("_p", "_mc")),
-        ("煤炭", "291", ("",)), ("煤炭", "292", ("",)),
+        ("煤炭", "291", ("", "_w")), ("煤炭", "292", ("",)),
         ("兰炭", "101", ("_p",)), ("兰炭", "102", ("_p", "_mc")),
-        ("兰炭", "291", ("",)), ("兰炭", "292", ("",)),
+        ("兰炭", "291", ("", "_w")), ("兰炭", "292", ("",)),
         ("焦炭", "101", ("_p",)), ("焦炭", "102", ("_p", "_mc")),
-        ("焦炭", "291", ("",)), ("焦炭", "292", ("",)),
-        ("硅铁", "105", ("_p",)), ("硅铁", "201", ("",)),
-        ("硅铁", "202", ("",)), ("硅铁", "291", ("",)), ("硅铁", "292", ("",)),
+        ("焦炭", "291", ("", "_w")), ("焦炭", "292", ("",)),
+        ("硅铁", "105", ("_p",)), ("硅铁", "201", ("", "_w")),
+        ("硅铁", "202", ("",)), ("硅铁", "291", ("", "_w")), ("硅铁", "292", ("",)),
         ("石灰石", "101", ("_p",)), ("石灰石", "102", ("_p", "_mc")),
-        ("石灰石", "291", ("",)), ("石灰石", "292", ("",)),
+        ("石灰石", "291", ("", "_w")), ("石灰石", "292", ("",)),
         ("白云石", "101", ("_p",)), ("白云石", "102", ("_p", "_mc")),
-        ("白云石", "291", ("",)), ("白云石", "292", ("",)),
-        ("柴油", "101", ("_p",)), ("柴油", "201", ("",)),
+        ("白云石", "291", ("", "_w")), ("白云石", "292", ("",)),
+        ("柴油", "101", ("_p",)), ("柴油", "201", ("", "_w")),
         ("废钢", "101", ("_p",)), ("废钢", "102", ("_p",)),
-        ("废钢", "105", ("_p",)), ("废钢", "201", ("",)),
-        ("废钢", "202", ("",)), ("废钢", "291", ("",)), ("废钢", "292", ("",)),
+        ("废钢", "105", ("_p",)), ("废钢", "201", ("", "_w")),
+        ("废钢", "202", ("",)), ("废钢", "291", ("", "_w")), ("废钢", "292", ("",)),
     ],
 )
 def test_material_type_movement_type_matrix(
@@ -159,14 +160,21 @@ def test_daily_rows_are_aggregated_by_material_and_posting_date() -> None:
 
     aggregates_by_key = {(item.meter_number, item.frozen_time): item for item in aggregates}
     first_day = aggregates_by_key[("semmat-a", datetime.strptime("20261009", "%Y%m%d").date())]
+    first_day_wet = aggregates_by_key[("semmat-a_w", datetime.strptime("20261009", "%Y%m%d").date())]
     all_day = aggregates_by_key[("sem_all", datetime.strptime("20261009", "%Y%m%d").date())]
-    assert len(aggregates) == 4
+    all_day_wet = aggregates_by_key[("sem_all_w", datetime.strptime("20261009", "%Y%m%d").date())]
+    assert len(aggregates) == 8
     assert first_day.dvalue == Decimal("3")
     assert first_day.price == Decimal("15.70")
     assert first_day.source_rows == 2
+    # 292 is the moisture line, so the wet basis keeps the 291 posting only.
+    assert first_day_wet.dvalue == Decimal("1")
+    assert first_day_wet.price == Decimal("12.30")
+    assert first_day_wet.source_rows == 1
     assert all_day.dvalue == Decimal("3")
     assert all_day.price == Decimal("15.70")
     assert all_day.source_rows == 2
+    assert all_day_wet.dvalue == Decimal("1")
 
 
 def test_daily_aggregation_separates_different_material_numbers() -> None:
@@ -195,7 +203,10 @@ def test_daily_aggregation_separates_different_material_numbers() -> None:
 
     aggregates = aggregate_consumption_rows(rows)
 
-    assert {item.meter_number for item in aggregates} == {"sfemat-a", "sfemat-b", "sfe_all"}
+    assert {item.meter_number for item in aggregates} == {
+        "sfemat-a", "sfemat-b", "sfe_all",
+        "sfemat-a_w", "sfemat-b_w", "sfe_all_w",
+    }
     assert {item.dvalue for item in aggregates} == {
         Decimal("1.000"), Decimal("2.000"), Decimal("3.000")
     }
@@ -230,8 +241,10 @@ def test_moisture_and_usage_rows_are_aggregated_separately() -> None:
 
     aggregates = aggregate_consumption_rows(rows)
 
-    assert len(aggregates) == 6
+    assert len(aggregates) == 8
     aggregates_by_meter = {item.meter_number: item for item in aggregates}
+    assert aggregates_by_meter["coamat-a_w"].dvalue == Decimal("1.000")
+    assert aggregates_by_meter["coa_all_w"].dvalue == Decimal("1.000")
     assert aggregates_by_meter["coamat-a"].dvalue == Decimal("1.000")
     assert aggregates_by_meter["coamat-a_p"].dvalue == Decimal("0.500")
     assert aggregates_by_meter["coamat-a_mc"].dvalue == Decimal("0.500")
@@ -351,6 +364,95 @@ def test_coke_quantity_is_kept_in_kilograms_while_others_stay_in_tonnes() -> Non
     assert aggregate_for("煤炭").dvalue == Decimal("2.5")
 
 
+# Verbatim from SAP_RW_Material_Move: the single 生物质炭 row supplied by the customer.
+BIOMASS_CHARCOAL_ROW = {
+    "ID": "4916108304+2026+0001",
+    "MovementType": "291",
+    "MaterialType": "生物质炭",
+    "Material": "20067787",
+    "PostingDate": "20261101",
+    "Qty": "-23,340",
+    "Unit": "KG",
+    "CNY": "-24,372.80",
+    "CC": "",
+    "CO": "ZC101-C12000",
+}
+
+
+def test_biomass_charcoal_row_is_mapped_like_the_other_fuels() -> None:
+    """291 usage, uppercase KG accepted, kilograms converted to tonnes, CO row kept aside."""
+    aggregates = aggregate_consumption_rows([BIOMASS_CHARCOAL_ROW])
+    by_meter = {item.meter_number: item for item in aggregates}
+
+    assert by_meter["bch20067787"].dvalue == Decimal("-23.340")
+    assert by_meter["bch20067787"].price == Decimal("-24372.80")
+    assert by_meter["bch_all"].dvalue == Decimal("-23.340")
+    # The CO dimension row repeats the usage quantity but never feeds the summary.
+    assert by_meter["bch20067787zc101-c12000"].dvalue == Decimal("-23.340")
+
+
+def test_biomass_charcoal_reserves_purchase_and_moisture_categories() -> None:
+    """101/102 are pre-wired although the source only carries 291 today."""
+    purchase = {
+        item.meter_number
+        for item in aggregate_consumption_rows([{**BIOMASS_CHARCOAL_ROW, "MovementType": "101"}])
+    }
+    assert purchase == {"bch20067787_p", "bch_all_p"}
+
+    wet = {
+        item.meter_number
+        for item in aggregate_consumption_rows([{**BIOMASS_CHARCOAL_ROW, "MovementType": "102"}])
+    }
+    assert wet == {"bch20067787_p", "bch20067787_mc", "bch_all_p", "bch_all_mc"}
+
+
+def test_wet_basis_excludes_the_moisture_lines() -> None:
+    """291 posts the gross input negative and 292 the moisture positive, so dry = wet + moisture."""
+    rows = [
+        {**BIOMASS_CHARCOAL_ROW, "ID": "wet-row", "MovementType": "291", "Qty": "-1,000", "CNY": "-1200"},
+        {**BIOMASS_CHARCOAL_ROW, "ID": "moisture-row", "MovementType": "292", "Qty": "100", "CNY": "0"},
+    ]
+
+    aggregates = aggregate_consumption_rows(rows)
+    by_meter = {item.meter_number: item for item in aggregates}
+
+    assert by_meter["bch20067787"].dvalue == Decimal("-0.900")
+    assert by_meter["bch20067787_w"].dvalue == Decimal("-1.000")
+    # Both bases carry the same amount: the moisture line is posted at zero value.
+    assert by_meter["bch20067787"].price == Decimal("-1200")
+    assert by_meter["bch20067787_w"].price == Decimal("-1200")
+    assert by_meter["bch_all_w"].dvalue == Decimal("-1.000")
+
+
+def test_silent_skips_are_counted_by_reason() -> None:
+    """Rows that map to nothing must surface in the log instead of disappearing."""
+    rows = [
+        {**BIOMASS_CHARCOAL_ROW, "MaterialType": "未知物料"},
+        {**BIOMASS_CHARCOAL_ROW, "Material": "   "},
+        {**BIOMASS_CHARCOAL_ROW, "MovementType": "999"},
+        {**BIOMASS_CHARCOAL_ROW, "ID": "OnlyKey"},
+        BIOMASS_CHARCOAL_ROW,
+    ]
+
+    aggregates, skipped = aggregate_consumption_rows_with_skip_counts(rows)
+
+    assert skipped == {
+        "unknown_material_type": 1,
+        "missing_material": 1,
+        "unmapped_movement_type": 1,
+    }
+    # Explicitly excluded IDs are not dirty data and are not counted.
+    assert "OnlyKey" not in skipped
+    assert {item.meter_number for item in aggregates} == {
+        "bch20067787",
+        "bch20067787_w",
+        "bch_all",
+        "bch_all_w",
+        "bch20067787zc101-c12000",
+        "bch20067787zc101-c12000_w",
+    }
+
+
 def test_usage_quantity_keeps_the_sign_of_the_source() -> None:
     aggregates = aggregate_consumption_rows(
         [
@@ -410,7 +512,9 @@ def test_usage_row_with_cost_object_gets_an_extra_plant_specific_meter() -> None
 
     assert {row["meter_number"] for row in mapped_rows} == {
         "sfe20056684",
+        "sfe20056684_w",
         "sfe20056684plant-1",
+        "sfe20056684plant-1_w",
     }
 
 
@@ -425,7 +529,7 @@ def test_empty_cost_object_does_not_create_an_extra_meter() -> None:
         }
     )
 
-    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684"}
+    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684", "sfe20056684_w"}
 
 
 def test_diesel_usage_with_cost_centre_gets_an_extra_meter() -> None:
@@ -441,7 +545,9 @@ def test_diesel_usage_with_cost_centre_gets_an_extra_meter() -> None:
 
     assert {row["meter_number"] for row in mapped_rows} == {
         "die20067733",
+        "die20067733_w",
         "die20067733cc-steel",
+        "die20067733cc-steel_w",
     }
 
 
@@ -459,8 +565,11 @@ def test_diesel_row_with_both_cost_fields_writes_both_extra_rows() -> None:
 
     assert {row["meter_number"] for row in mapped_rows} == {
         "die20067733",
+        "die20067733_w",
         "die20067733plant-1",
+        "die20067733plant-1_w",
         "die20067733cc-steel",
+        "die20067733cc-steel_w",
     }
 
 
@@ -475,7 +584,7 @@ def test_cost_centre_is_only_used_for_diesel() -> None:
         }
     )
 
-    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684"}
+    assert {row["meter_number"] for row in mapped_rows} == {"sfe20056684", "sfe20056684_w"}
 
 
 def test_diesel_purchase_is_not_split_by_cost_centre() -> None:
@@ -525,8 +634,14 @@ def test_cost_object_usage_is_stored_separately_without_double_counting_the_all_
 
     by_meter = {item.meter_number: item for item in aggregates}
 
-    assert set(by_meter) == {"sfemat001", "sfemat001plant-1", "sfe_all"}
+    # Both bases get the plant-specific row, and neither copy feeds the _all totals.
+    assert set(by_meter) == {
+        "sfemat001", "sfemat001_w",
+        "sfemat001plant-1", "sfemat001plant-1_w",
+        "sfe_all", "sfe_all_w",
+    }
     assert by_meter["sfemat001plant-1"].dvalue == Decimal("1.000")
+    assert by_meter["sfemat001plant-1_w"].dvalue == Decimal("1.000")
     assert by_meter["sfemat001plant-1"].price == Decimal("10")
     assert by_meter["sfe_all"].dvalue == Decimal("1.000")
 
