@@ -88,14 +88,13 @@ MATERIAL_MOVEMENT_CATEGORIES = {
 }
 CATEGORY_SUFFIXES = {"usage": "", "wet_usage": "_w", "purchase": "_p", "moisture": "_mc"}
 ALL_MATERIALS_SUFFIX = "_all"
-# 201/291 are wet-basis consumption (the gross input, moisture included) and are posted negative;
-# 202/292 carry that input's moisture content and are posted positive. The plain usage category
-# adds all four movements together, so it already nets out the moisture and is the dry basis.
-# The wet basis is the same posting without the moisture lines, i.e. 201/291 only.
-# Only materials with measurable moisture split into the two bases (the allow list keeps
-# future material types single-basis by default); 硅铁/废钢/柴油 have no such distinction.
+# Business definition of the two bases (燃料/熔剂类物料 only):
+#   dry basis  (plain usage) = 291 + 292 netted by sign
+#   wet basis  (_w)          = 291 + 292 + 102, all summed with their posted signs
+# 201/202 belong to materials without a moisture split (硅铁/废钢/柴油) and never enter either
+# wet-basis formula. The allow list keeps future material types single-basis by default.
 WET_USAGE_CATEGORY = "wet_usage"
-WET_USAGE_MOVEMENT_TYPES = frozenset({"201", "291"})
+WET_USAGE_MOVEMENT_TYPES = frozenset({"291", "292", "102"})
 WET_USAGE_MATERIAL_TYPES = frozenset(
     {"煤炭", "兰炭", "焦炭", "石灰石", "白云石", "生物质炭"}
 )
@@ -218,12 +217,13 @@ def map_consumption_rows(
         for category in categories
     ]
     has_wet_basis = (
-        "usage" in categories
-        and movement_type in WET_USAGE_MOVEMENT_TYPES
+        movement_type in WET_USAGE_MOVEMENT_TYPES
         and material_type in WET_USAGE_MATERIAL_TYPES
     )
     if has_wet_basis:
-        # Same posting, moisture lines excluded: the wet basis sits beside the dry basis row.
+        # The wet basis sits beside the dry basis row and sums into the same _w meter; the
+        # moisture lines (292) and the purchase moisture deduction (102) join it there,
+        # each with its posted sign.
         mapped_rows.append(
             {
                 **source_row,
@@ -248,8 +248,9 @@ def map_consumption_rows(
                     "contributes_to_summary": False,
                 }
             )
-            if has_wet_basis:
+            if has_wet_basis and "usage" in categories:
                 # The wet basis mirrors the split; like the dry copy it stays out of _all totals.
+                # 102 has no usage CO row, so it does not get a wet one either.
                 mapped_rows.append(
                     {
                         **source_row,

@@ -224,11 +224,11 @@ def test_sync_writes_moisture_and_usage_to_separate_meter_rows() -> None:
             ("coa20056684", 1),
             ("coa20056684_mc", 0.5),
             ("coa20056684_p", 0.5),
-            ("coa20056684_w", 1),
+            ("coa20056684_w", 1.5),
             ("coa_all", 1),
             ("coa_all_mc", 0.5),
             ("coa_all_p", 0.5),
-            ("coa_all_w", 1),
+            ("coa_all_w", 1.5),
         ]
     finally:
         source_engine.dispose()

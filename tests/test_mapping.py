@@ -43,24 +43,25 @@ def test_moisture_movement_type_uses_separate_meter_number_suffix() -> None:
     assert {row["meter_number"] for row in mapped_rows} == {
         "coa20056684_p",
         "coa20056684_mc",
+        "coa20056684_w",
     }
 
 
 @pytest.mark.parametrize(
     ("material_type", "movement_type", "expected_suffixes"),
     [
-        ("煤炭", "101", ("_p",)), ("煤炭", "102", ("_p", "_mc")),
-        ("煤炭", "291", ("", "_w")), ("煤炭", "292", ("",)),
-        ("兰炭", "101", ("_p",)), ("兰炭", "102", ("_p", "_mc")),
-        ("兰炭", "291", ("", "_w")), ("兰炭", "292", ("",)),
-        ("焦炭", "101", ("_p",)), ("焦炭", "102", ("_p", "_mc")),
-        ("焦炭", "291", ("", "_w")), ("焦炭", "292", ("",)),
+        ("煤炭", "101", ("_p",)), ("煤炭", "102", ("_p", "_mc", "_w")),
+        ("煤炭", "291", ("", "_w")), ("煤炭", "292", ("", "_w")),
+        ("兰炭", "101", ("_p",)), ("兰炭", "102", ("_p", "_mc", "_w")),
+        ("兰炭", "291", ("", "_w")), ("兰炭", "292", ("", "_w")),
+        ("焦炭", "101", ("_p",)), ("焦炭", "102", ("_p", "_mc", "_w")),
+        ("焦炭", "291", ("", "_w")), ("焦炭", "292", ("", "_w")),
         ("硅铁", "105", ("_p",)), ("硅铁", "201", ("",)),
         ("硅铁", "202", ("",)), ("硅铁", "291", ("",)), ("硅铁", "292", ("",)),
-        ("石灰石", "101", ("_p",)), ("石灰石", "102", ("_p", "_mc")),
-        ("石灰石", "291", ("", "_w")), ("石灰石", "292", ("",)),
-        ("白云石", "101", ("_p",)), ("白云石", "102", ("_p", "_mc")),
-        ("白云石", "291", ("", "_w")), ("白云石", "292", ("",)),
+        ("石灰石", "101", ("_p",)), ("石灰石", "102", ("_p", "_mc", "_w")),
+        ("石灰石", "291", ("", "_w")), ("石灰石", "292", ("", "_w")),
+        ("白云石", "101", ("_p",)), ("白云石", "102", ("_p", "_mc", "_w")),
+        ("白云石", "291", ("", "_w")), ("白云石", "292", ("", "_w")),
         ("柴油", "101", ("_p",)), ("柴油", "201", ("",)),
         ("废钢", "101", ("_p",)), ("废钢", "102", ("_p",)),
         ("废钢", "105", ("_p",)), ("废钢", "201", ("",)),
@@ -167,14 +168,14 @@ def test_daily_rows_are_aggregated_by_material_and_posting_date() -> None:
     assert first_day.dvalue == Decimal("3")
     assert first_day.price == Decimal("15.70")
     assert first_day.source_rows == 2
-    # 292 is the moisture line, so the wet basis keeps the 291 posting only.
-    assert first_day_wet.dvalue == Decimal("1")
-    assert first_day_wet.price == Decimal("12.30")
-    assert first_day_wet.source_rows == 1
+    # The wet basis sums 291 + 292 (102 absent on this day), same as the dry basis here.
+    assert first_day_wet.dvalue == Decimal("3")
+    assert first_day_wet.price == Decimal("15.70")
+    assert first_day_wet.source_rows == 2
     assert all_day.dvalue == Decimal("3")
     assert all_day.price == Decimal("15.70")
     assert all_day.source_rows == 2
-    assert all_day_wet.dvalue == Decimal("1")
+    assert all_day_wet.dvalue == Decimal("3")
 
 
 def test_daily_aggregation_separates_different_material_numbers() -> None:
@@ -240,8 +241,9 @@ def test_moisture_and_usage_rows_are_aggregated_separately() -> None:
 
     assert len(aggregates) == 8
     aggregates_by_meter = {item.meter_number: item for item in aggregates}
-    assert aggregates_by_meter["coamat-a_w"].dvalue == Decimal("1.000")
-    assert aggregates_by_meter["coa_all_w"].dvalue == Decimal("1.000")
+    # The wet basis adds the flipped 102 amount on top of the 291 posting: 1.0 + 0.5.
+    assert aggregates_by_meter["coamat-a_w"].dvalue == Decimal("1.500")
+    assert aggregates_by_meter["coa_all_w"].dvalue == Decimal("1.500")
     assert aggregates_by_meter["coamat-a"].dvalue == Decimal("1.000")
     assert aggregates_by_meter["coamat-a_p"].dvalue == Decimal("0.500")
     assert aggregates_by_meter["coamat-a_mc"].dvalue == Decimal("0.500")
@@ -265,7 +267,8 @@ def test_movement_102_is_aggregated_as_both_purchase_and_moisture() -> None:
     aggregates = aggregate_consumption_rows([row])
 
     assert {item.meter_number for item in aggregates} == {
-        "coamat-a_p", "coamat-a_mc", "coa_all_p", "coa_all_mc"
+        "coamat-a_p", "coamat-a_mc", "coamat-a_w",
+        "coa_all_p", "coa_all_mc", "coa_all_w",
     }
     assert all(item.dvalue == Decimal("1.000") for item in aggregates)
     assert all(item.price == Decimal("10") for item in aggregates)
@@ -400,25 +403,33 @@ def test_biomass_charcoal_reserves_purchase_and_moisture_categories() -> None:
         item.meter_number
         for item in aggregate_consumption_rows([{**BIOMASS_CHARCOAL_ROW, "MovementType": "102"}])
     }
-    assert wet == {"bch20067787_p", "bch20067787_mc", "bch_all_p", "bch_all_mc"}
+    assert wet == {
+        "bch20067787_p", "bch20067787_mc", "bch20067787_w",
+        "bch_all_p", "bch_all_mc", "bch_all_w",
+    }
 
 
-def test_wet_basis_excludes_the_moisture_lines() -> None:
-    """291 posts the gross input negative and 292 the moisture positive, so dry = wet + moisture."""
+def test_wet_basis_sums_291_292_and_102_by_posted_sign() -> None:
+    """Wet basis = 291 + 292 + 102, each summed with its posted sign (no sign flipping)."""
     rows = [
         {**BIOMASS_CHARCOAL_ROW, "ID": "wet-row", "MovementType": "291", "Qty": "-1,000", "CNY": "-1200"},
         {**BIOMASS_CHARCOAL_ROW, "ID": "moisture-row", "MovementType": "292", "Qty": "100", "CNY": "0"},
+        {**BIOMASS_CHARCOAL_ROW, "ID": "purchase-moisture-row", "MovementType": "102", "Qty": "-50", "CNY": "-60"},
     ]
 
     aggregates = aggregate_consumption_rows(rows)
     by_meter = {item.meter_number: item for item in aggregates}
 
+    # Dry basis keeps the signed net of 291 + 292: -1000 + 100.
     assert by_meter["bch20067787"].dvalue == Decimal("-0.900")
-    assert by_meter["bch20067787_w"].dvalue == Decimal("-1.000")
-    # Both bases carry the same amount: the moisture line is posted at zero value.
     assert by_meter["bch20067787"].price == Decimal("-1200")
-    assert by_meter["bch20067787_w"].price == Decimal("-1200")
-    assert by_meter["bch_all_w"].dvalue == Decimal("-1.000")
+    # Wet basis adds the moisture lines with their posted signs: -1000 + 100 - 50.
+    assert by_meter["bch20067787_w"].dvalue == Decimal("-0.950")
+    assert by_meter["bch20067787_w"].price == Decimal("-1260")
+    assert by_meter["bch_all_w"].dvalue == Decimal("-0.950")
+    assert by_meter["bch_all_w"].price == Decimal("-1260")
+    # The 102 line has no usage CO row, so the wet CO row carries only 291 + 292.
+    assert by_meter["bch20067787zc101-c12000_w"].dvalue == Decimal("-0.900")
 
 
 def test_silent_skips_are_counted_by_reason() -> None:
